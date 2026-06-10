@@ -16,7 +16,7 @@ import time
 import pyautogui
 import websockets
 from dotenv import load_dotenv
-from PIL import Image, ImageGrab
+from PIL import ImageGrab
 
 load_dotenv()
 
@@ -38,77 +38,14 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Coba import win32 untuk capture kursor — opsional
-try:
-    import win32gui
-    import win32ui
-    import win32con
-    import win32api
-    WIN32_TERSEDIA = True
-    log.info("win32 tersedia — kursor akan ikut tercapture.")
-except ImportError:
-    WIN32_TERSEDIA = False
-    log.warning("pywin32 tidak terinstall — kursor tidak akan muncul di stream.")
-    log.warning("Jalankan: pip install pywin32")
-
-
-def ambil_screenshot_win32() -> Image.Image:
-    """
-    Capture layar beserta kursor menggunakan win32gui.
-    Menggambar kursor secara manual di atas screenshot.
-    """
-    lebar, tinggi = pyautogui.size()
-
-    # Ambil screenshot via win32
-    hdesktop = win32gui.GetDesktopWindow()
-    hdc = win32gui.GetWindowDC(hdesktop)
-    dc_obj = win32ui.CreateDCFromHandle(hdc)
-    mem_dc = dc_obj.CreateCompatibleDC()
-    bitmap = win32ui.CreateBitmap()
-    bitmap.CreateCompatibleBitmap(dc_obj, lebar, tinggi)
-    mem_dc.SelectObject(bitmap)
-    mem_dc.BitBlt((0, 0), (lebar, tinggi), dc_obj, (0, 0), win32con.SRCCOPY)
-
-    # Gambar kursor di atas screenshot
-    try:
-        flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
-        if flags:  # kursor terlihat
-            win32gui.DrawIconEx(
-                mem_dc.GetSafeHdc(), cx, cy, hcursor,
-                0, 0, 0, None, win32con.DI_NORMAL
-            )
-    except Exception:
-        pass  # gagal gambar kursor, lanjut tanpa kursor
-
-    # Konversi ke PIL Image
-    bmp_info = bitmap.GetInfo()
-    bmp_str = bitmap.GetBitmapBits(True)
-    img = Image.frombuffer(
-        "RGB",
-        (bmp_info["bmWidth"], bmp_info["bmHeight"]),
-        bmp_str, "raw", "BGRX", 0, 1
-    )
-
-    # Bersihkan resource
-    mem_dc.DeleteDC()
-    dc_obj.DeleteDC()
-    win32gui.ReleaseDC(hdesktop, hdc)
-    win32gui.DeleteObject(bitmap.GetHandle())
-
-    return img
-
 
 def ambil_screenshot() -> str:
     """
-    Menangkap seluruh layar beserta kursor.
-    Menggunakan win32 jika tersedia, fallback ke ImageGrab.
-    Mengembalikan string base64 JPEG siap kirim via WebSocket.
+    Menangkap seluruh layar utama menggunakan PIL.ImageGrab.
+    ImageGrab otomatis menyertakan kursor mouse dalam tangkapan layar.
+    Mengembalikan string base64 JPEG yang siap dikirim via WebSocket.
     """
-    if WIN32_TERSEDIA:
-        img = ambil_screenshot_win32()
-    else:
-        img = ImageGrab.grab().convert("RGB")
-
+    img = ImageGrab.grab().convert("RGB")
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=SCREENSHOT_QUALITY, optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
@@ -118,6 +55,7 @@ def eksekusi_input(data: dict) -> None:
     """
     Mengeksekusi perintah input yang diterima dari server.
     Mendukung: mouse_move, mouse_click, mouse_scroll, key_press, key_type.
+    Parameter `data` adalah dict hasil parse JSON dari pesan WebSocket.
     """
     aksi = data.get("action")
 
@@ -149,22 +87,28 @@ def eksekusi_input(data: dict) -> None:
             x, y = data["x"], data["y"]
             dx, dy = data.get("dx", 0), data.get("dy", 0)
             pyautogui.moveTo(x, y, duration=0)
+            # pyautogui scroll: positif = atas, negatif = bawah
             if dy != 0:
                 pyautogui.scroll(int(dy / 100))
             if dx != 0:
                 pyautogui.hscroll(int(dx / 100))
 
         elif aksi == "key_press":
-            pyautogui.press(data["key"])
+            kunci = data["key"]
+            pyautogui.press(kunci)
 
         elif aksi == "key_down":
-            pyautogui.keyDown(data["key"])
+            kunci = data["key"]
+            pyautogui.keyDown(kunci)
 
         elif aksi == "key_up":
-            pyautogui.keyUp(data["key"])
+            kunci = data["key"]
+            pyautogui.keyUp(kunci)
 
         elif aksi == "key_type":
-            pyautogui.write(data["text"], interval=0.02)
+            teks = data["text"]
+            # typewrite tidak mendukung unicode, gunakan pyperclip jika perlu
+            pyautogui.write(teks, interval=0.02)
 
         else:
             log.warning("Aksi tidak dikenal: %s", aksi)
@@ -176,14 +120,21 @@ def eksekusi_input(data: dict) -> None:
 def bersihkan_state_input() -> None:
     """
     Melepaskan semua tombol modifier dan tombol mouse yang mungkin tersangkut.
+    Dipanggil saat koneksi terputus atau program dihentikan.
     """
-    log.info("Membersihkan state input...")
-    for kunci in ["ctrl", "shift", "alt", "win"]:
+    log.info("Membersihkan state input (melepaskan semua tombol modifier & mouse)...")
+    
+    # Modifier keys yang rawan stuck
+    modifier_keys = ["ctrl", "shift", "alt", "win"]
+    for kunci in modifier_keys:
         try:
             pyautogui.keyUp(kunci)
         except Exception:
             pass
-    for tombol in ["left", "right", "middle"]:
+
+    # Tombol mouse
+    tombol_mouse = ["left", "right", "middle"]
+    for tombol in tombol_mouse:
         try:
             pyautogui.mouseUp(button=tombol)
         except Exception:
@@ -191,36 +142,47 @@ def bersihkan_state_input() -> None:
 
 
 async def kirim_screenshot(ws) -> None:
-    """Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS."""
+    """
+    Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS.
+    Berjalan sebagai coroutine terpisah bersamaan dengan penerima perintah.
+    """
     interval = 1.0 / SCREENSHOT_FPS
 
     while True:
         mulai = time.monotonic()
         try:
             frame = ambil_screenshot()
-            await ws.send(json.dumps({"type": "frame", "data": frame}))
+            pesan = json.dumps({"type": "frame", "data": frame})
+            await ws.send(pesan)
         except websockets.ConnectionClosed:
+            # Koneksi terputus, biarkan loop utama menangani reconnect
             break
         except Exception as e:
             log.error("Gagal kirim screenshot: %s", e)
 
+        # Jaga framerate agar tidak melebihi FPS yang dikonfigurasi
         sisa = interval - (time.monotonic() - mulai)
         if sisa > 0:
             await asyncio.sleep(sisa)
 
 
 async def terima_perintah(ws) -> None:
-    """Loop penerimaan perintah input dari server."""
+    """
+    Loop penerimaan perintah input dari server.
+    Setiap pesan JSON yang masuk dieksekusi oleh eksekusi_input().
+    """
     async for pesan in ws:
         try:
             data = json.loads(pesan)
             tipe = data.get("type")
+
             if tipe == "input":
                 eksekusi_input(data)
             elif tipe == "ping":
                 await ws.send(json.dumps({"type": "pong"}))
             else:
                 log.debug("Pesan tidak dikenal: %s", tipe)
+
         except json.JSONDecodeError:
             log.warning("Pesan bukan JSON yang valid")
         except websockets.ConnectionClosed:
@@ -229,8 +191,8 @@ async def terima_perintah(ws) -> None:
 
 async def jalankan_agent() -> None:
     """
-    Fungsi utama agent: koneksi ke server, kirim info resolusi,
-    lalu jalankan loop screenshot dan penerima perintah bersamaan.
+    Fungsi utama agent: menghubungkan ke server, mengirim header autentikasi,
+    lalu menjalankan loop screenshot dan penerima perintah secara bersamaan.
     Otomatis reconnect jika koneksi terputus.
     """
     headers = {"Authorization": f"Bearer {AGENT_TOKEN}"}
@@ -247,22 +209,26 @@ async def jalankan_agent() -> None:
             ) as ws:
                 log.info("Terhubung ke server. Memulai stream layar...")
 
+                # Kirim info resolusi layar saat koneksi berhasil
                 lebar, tinggi = pyautogui.size()
-                await ws.send(json.dumps({"type": "info", "width": lebar, "height": tinggi}))
+                resolusi = {"type": "info", "width": lebar, "height": tinggi}
+                await ws.send(json.dumps(resolusi))
 
+                # Jalankan screenshot sender dan command receiver secara bersamaan
                 await asyncio.gather(
                     kirim_screenshot(ws),
                     terima_perintah(ws),
                 )
-
+            
+            # Bersihkan input jika loop normal selesai/terputus
             bersihkan_state_input()
 
         except websockets.exceptions.InvalidStatus as e:
-            log.error("Koneksi ditolak (status %s). Cek AGENT_TOKEN.", e.response.status_code)
+            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.response.status_code)
             await asyncio.sleep(RECONNECT_DELAY * 2)
 
         except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
-            log.warning("Koneksi terputus: %s. Reconnect dalam %ds...", e, RECONNECT_DELAY)
+            log.warning("Koneksi terputus: %s. Mencoba reconnect dalam %ds...", e, RECONNECT_DELAY)
             bersihkan_state_input()
             await asyncio.sleep(RECONNECT_DELAY)
 
@@ -273,6 +239,7 @@ async def jalankan_agent() -> None:
 
 
 if __name__ == "__main__":
+    # Validasi token sebelum mulai
     if not AGENT_TOKEN:
         log.error("AGENT_TOKEN belum diset. Tambahkan ke file .env")
         sys.exit(1)
