@@ -176,6 +176,7 @@ function handlePesan(data) {
       remoteWidth  = data.width;
       remoteHeight = data.height;
       infoRes.textContent = `${data.width}×${data.height}`;
+      aturUkuranCanvas(data.width, data.height);
       break;
 
     case "agent_status":
@@ -192,22 +193,26 @@ function handlePesan(data) {
 // ─── Render frame ─────────────────────────────────────────────────────────────
 
 /**
+ * Menghitung dan menetapkan ukuran canvas agar proporsional dengan resolusi agent.
+ * Dipanggil sekali saat pesan "info" diterima — bukan setiap frame.
+ * Resize canvas menghapus isinya, jadi jangan lakukan di renderFrame.
+ */
+function aturUkuranCanvas(w, h) {
+  const area = viewerArea.getBoundingClientRect();
+  const scale = Math.min(area.width / w, area.height / h);
+  canvas.width  = Math.floor(w * scale);
+  canvas.height = Math.floor(h * scale);
+}
+
+/**
  * Mendekode string base64 JPEG dan menggambar ke canvas.
+ * Tidak mengubah ukuran canvas agar tidak terjadi flash hitam antar frame.
  */
 function renderFrame(base64Data) {
   overlayLoading.hidden = true;
 
   const img = new Image();
   img.onload = () => {
-    // Sesuaikan ukuran canvas dengan area viewer
-    const area = viewerArea.getBoundingClientRect();
-    const scaleX = area.width  / img.naturalWidth;
-    const scaleY = area.height / img.naturalHeight;
-    const scale  = Math.min(scaleX, scaleY);
-
-    canvas.width  = img.naturalWidth  * scale;
-    canvas.height = img.naturalHeight * scale;
-
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     frameCount++;
   };
@@ -406,6 +411,10 @@ function updateAgentStatus(online) {
  * Inisialisasi saat halaman dimuat.
  * Jika sudah ada JWT di sessionStorage, langsung ke viewer.
  */
+window.addEventListener("resize", () => {
+  if (remoteWidth && remoteHeight) aturUkuranCanvas(remoteWidth, remoteHeight);
+});
+
 (function init() {
   if (jwtToken) {
     tampilViewer();
