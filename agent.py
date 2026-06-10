@@ -124,7 +124,7 @@ def eksekusi_input(data: dict) -> None:
         log.error("Gagal eksekusi input '%s': %s", aksi, e)
 
 
-async def kirim_screenshot(ws: websockets.WebSocketClientProtocol) -> None:
+async def kirim_screenshot(ws) -> None:
     """
     Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS.
     Berjalan sebagai coroutine terpisah bersamaan dengan penerima perintah.
@@ -149,7 +149,7 @@ async def kirim_screenshot(ws: websockets.WebSocketClientProtocol) -> None:
             await asyncio.sleep(sisa)
 
 
-async def terima_perintah(ws: websockets.WebSocketClientProtocol) -> None:
+async def terima_perintah(ws) -> None:
     """
     Loop penerimaan perintah input dari server.
     Setiap pesan JSON yang masuk dieksekusi oleh eksekusi_input().
@@ -204,8 +204,8 @@ async def jalankan_agent() -> None:
                     terima_perintah(ws),
                 )
 
-        except websockets.InvalidStatusCode as e:
-            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.status_code)
+        except websockets.exceptions.InvalidStatus as e:
+            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.response.status_code)
             await asyncio.sleep(RECONNECT_DELAY * 2)
 
         except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
