@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Remote PC Control</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════
+       LAYAR LOGIN
+  ═══════════════════════════════════════════ -->
+  <div id="screen-login" class="screen active">
+    <div class="login-card">
+      <div class="login-logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+        </svg>
+      </div>
+      <h1>Remote PC</h1>
+      <p class="login-subtitle">Masukkan password untuk mengakses</p>
+
+      <form id="form-login">
+        <div class="input-group">
+          <label for="input-password">Password</label>
+          <input
+            id="input-password"
+            type="password"
+            placeholder="••••••••••••"
+            autocomplete="current-password"
+            required
+          />
+        </div>
+        <button type="submit" id="btn-login">
+          <span class="btn-text">Masuk</span>
+          <span class="btn-spinner" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+            </svg>
+          </span>
+        </button>
+        <p id="login-error" class="error-msg" hidden></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       LAYAR VIEWER
+  ═══════════════════════════════════════════ -->
+  <div id="screen-viewer" class="screen">
+
+    <!-- Toolbar atas -->
+    <header class="toolbar">
+      <div class="toolbar-left">
+        <div id="status-dot" class="status-dot offline" title="Status agent"></div>
+        <span id="status-label" class="status-label">Menghubungkan...</span>
+      </div>
+
+      <div class="toolbar-center">
+        <span class="toolbar-title">Remote PC Control</span>
+      </div>
+
+      <div class="toolbar-right">
+        <div class="toolbar-info">
+          <span id="info-fps">0 FPS</span>
+          <span id="info-ping">— ms</span>
+          <span id="info-res">—</span>
+        </div>
+        <button id="btn-fullscreen" class="icon-btn" title="Fullscreen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
+          </svg>
+        </button>
+        <button id="btn-logout" class="icon-btn" title="Logout">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Area viewer utama -->
+    <main class="viewer-area" id="viewer-area">
+
+      <!-- Overlay: agent offline -->
+      <div id="overlay-offline" class="overlay">
+        <div class="overlay-content">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M18.364 5.636a9 9 0 0 1 0 12.728M15.536 8.464a5 5 0 0 1 0 7.072M2 2l20 20"/>
+            <circle cx="12" cy="12" r="1" fill="currentColor"/>
+          </svg>
+          <p>Agent tidak terhubung</p>
+          <span>Pastikan agent.py berjalan di PC target</span>
+        </div>
+      </div>
+
+      <!-- Overlay: loading -->
+      <div id="overlay-loading" class="overlay" hidden>
+        <div class="overlay-content">
+          <div class="spinner-ring"></div>
+          <p>Menunggu frame pertama...</p>
+        </div>
+      </div>
+
+      <!-- Canvas tampilan layar remote -->
+      <canvas id="canvas-screen"></canvas>
+
+    </main>
+
+    <!-- Toolbar bawah: keyboard shortcuts -->
+    <footer class="bottom-bar">
+      <button class="hotkey-btn" data-action="ctrl+alt+del">Ctrl+Alt+Del</button>
+      <button class="hotkey-btn" data-action="win">Win</button>
+      <button class="hotkey-btn" data-action="alt+tab">Alt+Tab</button>
+      <button class="hotkey-btn" data-action="ctrl+c">Ctrl+C</button>
+      <button class="hotkey-btn" data-action="ctrl+v">Ctrl+V</button>
+      <div class="bottom-bar-right">
+        <label class="toggle-label">
+          <input type="checkbox" id="toggle-input" checked />
+          <span>Input aktif</span>
+        </label>
+      </div>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

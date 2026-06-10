@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Virtual environment
+venv/
+.venv/
+env/
+.env
+ENV/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Ngrok
+ngrok.yml
+ngrok.log
+*.ngrok
+
+# Screenshots / captures (temp files agent)
+screenshots/
+captures/
+*.png
+*.jpg
+*.jpeg
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Node (jika frontend pakai npm)
+node_modules/
+client/node_modules/
+client/dist/
+client/.cache/
+
+# JWT / Keys
+*.pem
+*.key
+secret.txt

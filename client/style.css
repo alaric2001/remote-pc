@@ -1,0 +1,368 @@
+/* ─── Reset & base ──────────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          #0f1117;
+  --surface:     #1a1d27;
+  --surface-2:   #22263a;
+  --border:      #2e3250;
+  --accent:      #5b7fff;
+  --accent-hover:#7b9aff;
+  --danger:      #ff5b5b;
+  --text:        #e8eaf6;
+  --text-muted:  #7880a4;
+  --green:       #4cde80;
+  --yellow:      #ffd260;
+  --radius:      10px;
+  --toolbar-h:   48px;
+  --footer-h:    44px;
+}
+
+html, body {
+  height: 100%;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+/* ─── Screens ────────────────────────────────────────────────────────────────── */
+
+.screen {
+  display: none;
+  width: 100%;
+  height: 100%;
+}
+
+.screen.active { display: flex; }
+
+/* ─── Login ──────────────────────────────────────────────────────────────────── */
+
+#screen-login {
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 30%, #1a2060 0%, var(--bg) 70%);
+}
+
+.login-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 24px 64px rgba(0,0,0,.5);
+}
+
+.login-logo {
+  width: 56px;
+  height: 56px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.login-logo svg { width: 28px; height: 28px; color: var(--accent); }
+
+.login-card h1 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: -.3px;
+}
+
+.login-subtitle {
+  font-size: .85rem;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.login-card form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-group label {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: .6px;
+}
+
+.input-group input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: .95rem;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color .15s;
+}
+
+.input-group input:focus { border-color: var(--accent); }
+
+#btn-login {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  font-size: .95rem;
+  font-weight: 600;
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background .15s, transform .1s;
+  margin-top: 4px;
+}
+
+#btn-login:hover:not(:disabled) { background: var(--accent-hover); }
+#btn-login:active:not(:disabled) { transform: scale(.98); }
+#btn-login:disabled { opacity: .6; cursor: not-allowed; }
+
+.btn-spinner svg {
+  width: 18px;
+  height: 18px;
+  animation: spin .7s linear infinite;
+}
+
+.error-msg {
+  font-size: .84rem;
+  color: var(--danger);
+  text-align: center;
+  padding: 4px 0;
+}
+
+/* ─── Viewer layout ──────────────────────────────────────────────────────────── */
+
+#screen-viewer {
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Toolbar atas */
+.toolbar {
+  flex-shrink: 0;
+  height: var(--toolbar-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 12px;
+}
+
+.toolbar-left, .toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 180px;
+}
+
+.toolbar-right { justify-content: flex-end; }
+
+.toolbar-center {
+  flex: 1;
+  text-align: center;
+}
+
+.toolbar-title {
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: .4px;
+}
+
+/* Status dot */
+.status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected   { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.status-dot.connecting  { background: var(--yellow); animation: pulse 1.2s ease-in-out infinite; }
+.status-dot.offline,
+.status-dot.disconnected { background: var(--danger); }
+
+.status-label {
+  font-size: .82rem;
+  color: var(--text-muted);
+}
+
+/* Info strip */
+.toolbar-info {
+  display: flex;
+  gap: 10px;
+  font-size: .78rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Icon buttons */
+.icon-btn {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 5px;
+  display: flex;
+  align-items: center;
+  transition: color .15s, border-color .15s, background .15s;
+}
+
+.icon-btn svg { width: 16px; height: 16px; }
+.icon-btn:hover { color: var(--text); border-color: var(--accent); background: var(--surface-2); }
+
+/* ─── Viewer area ────────────────────────────────────────────────────────────── */
+
+.viewer-area {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #080a10;
+  overflow: hidden;
+  outline: none;
+  cursor: none; /* kursor disembunyikan karena kita pakai kursor remote */
+}
+
+.viewer-area:focus { outline: none; }
+
+#canvas-screen {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  cursor: none;
+  user-select: none;
+}
+
+/* ─── Overlay ────────────────────────────────────────────────────────────────── */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 10, 16, .85);
+  backdrop-filter: blur(4px);
+  z-index: 10;
+}
+
+.overlay-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.overlay-content svg {
+  width: 52px;
+  height: 52px;
+  color: var(--border);
+}
+
+.overlay-content p {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.overlay-content span { font-size: .82rem; }
+
+/* Spinner ring */
+.spinner-ring {
+  width: 44px;
+  height: 44px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+
+/* ─── Footer hotkeys ─────────────────────────────────────────────────────────── */
+
+.bottom-bar {
+  flex-shrink: 0;
+  height: var(--footer-h);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 8px;
+}
+
+.hotkey-btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: .78rem;
+  font-family: "Segoe UI", monospace;
+  padding: 5px 10px;
+  transition: color .15s, border-color .15s;
+  white-space: nowrap;
+}
+
+.hotkey-btn:hover { color: var(--text); border-color: var(--accent); }
+.hotkey-btn:active { transform: scale(.96); }
+
+.bottom-bar-right {
+  margin-left: auto;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: .82rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle-label input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+/* ─── Animasi ────────────────────────────────────────────────────────────────── */
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .3; }
+}
