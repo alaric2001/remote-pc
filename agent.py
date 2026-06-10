@@ -147,7 +147,7 @@ def bersihkan_state_input() -> None:
             pass
 
 
-async def kirim_screenshot(ws: websockets.WebSocketClientProtocol) -> None:
+async def kirim_screenshot(ws) -> None:
     """
     Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS.
     Berjalan sebagai coroutine terpisah bersamaan dengan penerima perintah.
@@ -172,7 +172,7 @@ async def kirim_screenshot(ws: websockets.WebSocketClientProtocol) -> None:
             await asyncio.sleep(sisa)
 
 
-async def terima_perintah(ws: websockets.WebSocketClientProtocol) -> None:
+async def terima_perintah(ws) -> None:
     """
     Loop penerimaan perintah input dari server.
     Setiap pesan JSON yang masuk dieksekusi oleh eksekusi_input().
@@ -208,7 +208,7 @@ async def jalankan_agent() -> None:
             log.info("Menghubungkan ke server: %s", SERVER_URL)
             async with websockets.connect(
                 SERVER_URL,
-                extra_headers=headers,
+                additional_headers=headers,
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
@@ -230,8 +230,8 @@ async def jalankan_agent() -> None:
             # Bersihkan input jika loop normal selesai/terputus
             bersihkan_state_input()
 
-        except websockets.InvalidStatusCode as e:
-            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.status_code)
+        except websockets.exceptions.InvalidStatus as e:
+            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.response.status_code)
             await asyncio.sleep(RECONNECT_DELAY * 2)
 
         except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
