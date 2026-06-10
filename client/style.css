@@ -1,25 +1,32 @@
 /* ─── Reset & base ──────────────────────────────────────────────────────────── */
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg:          #0f1117;
-  --surface:     #1a1d27;
-  --surface-2:   #22263a;
-  --border:      #2e3250;
-  --accent:      #5b7fff;
-  --accent-hover:#7b9aff;
-  --danger:      #ff5b5b;
-  --text:        #e8eaf6;
-  --text-muted:  #7880a4;
-  --green:       #4cde80;
-  --yellow:      #ffd260;
-  --radius:      10px;
-  --toolbar-h:   48px;
-  --footer-h:    44px;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-html, body {
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface-2: #22263a;
+  --border: #2e3250;
+  --accent: #5b7fff;
+  --accent-hover: #7b9aff;
+  --danger: #ff5b5b;
+  --text: #e8eaf6;
+  --text-muted: #7880a4;
+  --green: #4cde80;
+  --yellow: #ffd260;
+  --radius: 10px;
+  --toolbar-h: 48px;
+  --footer-h: 44px;
+}
+
+html,
+body {
   height: 100%;
   font-family: "Segoe UI", system-ui, sans-serif;
   background: var(--bg);
@@ -35,7 +42,9 @@ html, body {
   height: 100%;
 }
 
-.screen.active { display: flex; }
+.screen.active {
+  display: flex;
+}
 
 /* ─── Login ──────────────────────────────────────────────────────────────────── */
 
@@ -55,7 +64,7 @@ html, body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  box-shadow: 0 24px 64px rgba(0,0,0,.5);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .5);
 }
 
 .login-logo {
@@ -70,7 +79,11 @@ html, body {
   margin-bottom: 4px;
 }
 
-.login-logo svg { width: 28px; height: 28px; color: var(--accent); }
+.login-logo svg {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
 
 .login-card h1 {
   font-size: 1.4rem;
@@ -117,7 +130,9 @@ html, body {
   transition: border-color .15s;
 }
 
-.input-group input:focus { border-color: var(--accent); }
+.input-group input:focus {
+  border-color: var(--accent);
+}
 
 #btn-login {
   background: var(--accent);
@@ -136,9 +151,18 @@ html, body {
   margin-top: 4px;
 }
 
-#btn-login:hover:not(:disabled) { background: var(--accent-hover); }
-#btn-login:active:not(:disabled) { transform: scale(.98); }
-#btn-login:disabled { opacity: .6; cursor: not-allowed; }
+#btn-login:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+#btn-login:active:not(:disabled) {
+  transform: scale(.98);
+}
+
+#btn-login:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
 
 .btn-spinner svg {
   width: 18px;
@@ -172,14 +196,17 @@ html, body {
   gap: 12px;
 }
 
-.toolbar-left, .toolbar-right {
+.toolbar-left,
+.toolbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 180px;
 }
 
-.toolbar-right { justify-content: flex-end; }
+.toolbar-right {
+  justify-content: flex-end;
+}
 
 .toolbar-center {
   flex: 1;
@@ -201,10 +228,20 @@ html, body {
   flex-shrink: 0;
 }
 
-.status-dot.connected   { background: var(--green); box-shadow: 0 0 6px var(--green); }
-.status-dot.connecting  { background: var(--yellow); animation: pulse 1.2s ease-in-out infinite; }
+.status-dot.connected {
+  background: var(--green);
+  box-shadow: 0 0 6px var(--green);
+}
+
+.status-dot.connecting {
+  background: var(--yellow);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
 .status-dot.offline,
-.status-dot.disconnected { background: var(--danger); }
+.status-dot.disconnected {
+  background: var(--danger);
+}
 
 .status-label {
   font-size: .82rem;
@@ -233,8 +270,16 @@ html, body {
   transition: color .15s, border-color .15s, background .15s;
 }
 
-.icon-btn svg { width: 16px; height: 16px; }
-.icon-btn:hover { color: var(--text); border-color: var(--accent); background: var(--surface-2); }
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
 
 /* ─── Viewer area ────────────────────────────────────────────────────────────── */
 
@@ -247,10 +292,13 @@ html, body {
   background: #080a10;
   overflow: hidden;
   outline: none;
-  cursor: none; /* kursor disembunyikan karena kita pakai kursor remote */
+  cursor: none;
+  /* kursor disembunyikan karena kita pakai kursor remote */
 }
 
-.viewer-area:focus { outline: none; }
+.viewer-area:focus {
+  outline: none;
+}
 
 #canvas-screen {
   display: block;
@@ -271,6 +319,11 @@ html, body {
   background: rgba(8, 10, 16, .85);
   backdrop-filter: blur(4px);
   z-index: 10;
+}
+
+/* TAMBAHKAN INI — override CSS agar atribut hidden bisa bekerja */
+.overlay[hidden] {
+  display: none !important;
 }
 
 .overlay-content {
@@ -294,7 +347,9 @@ html, body {
   color: var(--text);
 }
 
-.overlay-content span { font-size: .82rem; }
+.overlay-content span {
+  font-size: .82rem;
+}
 
 /* Spinner ring */
 .spinner-ring {
@@ -332,8 +387,14 @@ html, body {
   white-space: nowrap;
 }
 
-.hotkey-btn:hover { color: var(--text); border-color: var(--accent); }
-.hotkey-btn:active { transform: scale(.96); }
+.hotkey-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.hotkey-btn:active {
+  transform: scale(.96);
+}
 
 .bottom-bar-right {
   margin-left: auto;
@@ -359,10 +420,19 @@ html, body {
 /* ─── Animasi ────────────────────────────────────────────────────────────────── */
 
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: .3; }
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: .3;
+  }
 }

@@ -5,7 +5,6 @@
 
 // ─── Konfigurasi ─────────────────────────────────────────────────────────────
 
-// Deteksi URL server secara otomatis dari lokasi halaman ini diakses
 const SERVER_ORIGIN = window.location.origin;
 const WS_ORIGIN = SERVER_ORIGIN.replace(/^http/, "ws");
 
@@ -14,31 +13,31 @@ const WS_CLIENT = `${WS_ORIGIN}/ws/client`;
 
 // ─── Elemen DOM ───────────────────────────────────────────────────────────────
 
-const screenLogin  = document.getElementById("screen-login");
+const screenLogin = document.getElementById("screen-login");
 const screenViewer = document.getElementById("screen-viewer");
-const formLogin    = document.getElementById("form-login");
-const inputPwd     = document.getElementById("input-password");
-const btnLogin     = document.getElementById("btn-login");
-const btnText      = btnLogin.querySelector(".btn-text");
-const btnSpinner   = btnLogin.querySelector(".btn-spinner");
-const loginError   = document.getElementById("login-error");
+const formLogin = document.getElementById("form-login");
+const inputPwd = document.getElementById("input-password");
+const btnLogin = document.getElementById("btn-login");
+const btnText = btnLogin.querySelector(".btn-text");
+const btnSpinner = btnLogin.querySelector(".btn-spinner");
+const loginError = document.getElementById("login-error");
 
-const canvas        = document.getElementById("canvas-screen");
-const ctx           = canvas.getContext("2d");
-const viewerArea    = document.getElementById("viewer-area");
+const canvas = document.getElementById("canvas-screen");
+const ctx = canvas.getContext("2d");
+const viewerArea = document.getElementById("viewer-area");
 const overlayOffline = document.getElementById("overlay-offline");
 const overlayLoading = document.getElementById("overlay-loading");
 
-const statusDot   = document.getElementById("status-dot");
+const statusDot = document.getElementById("status-dot");
 const statusLabel = document.getElementById("status-label");
-const infoFps     = document.getElementById("info-fps");
-const infoPing    = document.getElementById("info-ping");
-const infoRes     = document.getElementById("info-res");
+const infoFps = document.getElementById("info-fps");
+const infoPing = document.getElementById("info-ping");
+const infoRes = document.getElementById("info-res");
 
 const btnFullscreen = document.getElementById("btn-fullscreen");
-const btnLogout     = document.getElementById("btn-logout");
-const toggleInput   = document.getElementById("toggle-input");
-const hotkeys       = document.querySelectorAll(".hotkey-btn");
+const btnLogout = document.getElementById("btn-logout");
+const toggleInput = document.getElementById("toggle-input");
+const hotkeys = document.querySelectorAll(".hotkey-btn");
 
 // ─── State aplikasi ───────────────────────────────────────────────────────────
 
@@ -47,21 +46,18 @@ let jwtToken = sessionStorage.getItem("jwt_token") || null;
 let agentConnected = false;
 let inputEnabled = true;
 
-// Ukuran layar agent (untuk scaling koordinat mouse)
-let remoteWidth  = 1920;
+let remoteWidth = 1920;
 let remoteHeight = 1080;
 
-// Metrik FPS
 let frameCount = 0;
 let lastFpsTime = performance.now();
 let lastPingTime = 0;
 
+// FIX #1: Flag diganti — tracking apakah resolusi remote sudah diketahui
+let resolusiDiketahui = false;
+
 // ─── Login ────────────────────────────────────────────────────────────────────
 
-/**
- * Menangani submit form login.
- * Mengirim password ke server, menyimpan JWT, lalu membuka koneksi WebSocket.
- */
 formLogin.addEventListener("submit", async (e) => {
   e.preventDefault();
   setLoginLoading(true);
@@ -84,7 +80,8 @@ formLogin.addEventListener("submit", async (e) => {
     sessionStorage.setItem("jwt_token", jwtToken);
 
     tampilViewer();
-    hubungkanWebSocket();
+    // FIX #1: Tunda koneksi WS agar browser selesai render viewer dulu
+    setTimeout(hubungkanWebSocket, 100);
 
   } catch (err) {
     tampilError(err.message);
@@ -119,17 +116,12 @@ function tampilLogin() {
 
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 
-/**
- * Membuka koneksi WebSocket ke server dengan JWT sebagai query parameter.
- * Menangani reconnect otomatis jika koneksi terputus.
- */
 function hubungkanWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
 
   updateStatus("connecting");
   const url = `${WS_CLIENT}?token=${encodeURIComponent(jwtToken)}`;
   ws = new WebSocket(url);
-
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {
@@ -147,7 +139,6 @@ function hubungkanWebSocket() {
   };
 
   ws.onclose = (event) => {
-    // Kode 4001 = token tidak valid, jangan reconnect
     if (event.code === 4001) {
       sessionStorage.removeItem("jwt_token");
       jwtToken = null;
@@ -163,9 +154,6 @@ function hubungkanWebSocket() {
   };
 }
 
-/**
- * Menangani pesan JSON yang masuk dari server.
- */
 function handlePesan(data) {
   switch (data.type) {
     case "frame":
@@ -173,13 +161,16 @@ function handlePesan(data) {
       break;
 
     case "info":
-      remoteWidth  = data.width;
+      remoteWidth = data.width;
       remoteHeight = data.height;
+      resolusiDiketahui = true;
       infoRes.textContent = `${data.width}×${data.height}`;
-      aturUkuranCanvas(data.width, data.height);
+      // FIX #1: Sizing canvas pakai requestAnimationFrame agar layout sudah stabil
+      requestAnimationFrame(() => aturUkuranCanvas(data.width, data.height));
       break;
 
     case "agent_status":
+      // FIX #2: Selalu update agentConnected dari server, tanpa kondisi tambahan
       agentConnected = data.connected;
       updateAgentStatus(data.connected);
       break;
@@ -192,34 +183,37 @@ function handlePesan(data) {
 
 // ─── Render frame ─────────────────────────────────────────────────────────────
 
-let canvasSudahDisizing = false;
-
-/**
- * Menghitung dan menetapkan ukuran canvas agar proporsional dengan resolusi agent.
- * Dipanggil sekali saat pesan "info" diterima — bukan setiap frame.
- * Resize canvas menghapus isinya, jadi jangan lakukan di renderFrame.
- */
 function aturUkuranCanvas(w, h) {
+  // FIX #1: Paksa reflow dulu agar getBoundingClientRect akurat
   const area = viewerArea.getBoundingClientRect();
+
+  // Jika area masih 0 (belum selesai render), coba lagi di frame berikutnya
+  if (area.width === 0 || area.height === 0) {
+    requestAnimationFrame(() => aturUkuranCanvas(w, h));
+    return;
+  }
+
   const scale = Math.min(area.width / w, area.height / h);
-  canvas.width  = Math.floor(w * scale);
+  canvas.width = Math.floor(w * scale);
   canvas.height = Math.floor(h * scale);
-  canvasSudahDisizing = true;
 }
 
-/**
- * Mendekode string base64 JPEG dan menggambar ke canvas.
- * Jika info resolusi belum diterima, sizing dilakukan dari dimensi gambar pertama.
- */
 function renderFrame(base64Data) {
   overlayLoading.hidden = true;
 
   const img = new Image();
   img.onload = () => {
-    // Fallback: sizing dari frame pertama jika pesan "info" belum diterima
-    if (!canvasSudahDisizing) {
-      aturUkuranCanvas(img.naturalWidth, img.naturalHeight);
+    // Fallback sizing jika pesan "info" belum pernah datang
+    if (!resolusiDiketahui) {
+      remoteWidth = img.naturalWidth;
+      remoteHeight = img.naturalHeight;
+      resolusiDiketahui = true;
+      requestAnimationFrame(() => aturUkuranCanvas(img.naturalWidth, img.naturalHeight));
     }
+
+    // Jangan gambar ke canvas yang berukuran 0
+    if (canvas.width === 0 || canvas.height === 0) return;
+
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     frameCount++;
   };
@@ -236,7 +230,6 @@ function mulaiFpsCounter() {
     frameCount = 0;
     lastFpsTime = now;
 
-    // Kirim ping untuk mengukur latency
     if (ws && ws.readyState === WebSocket.OPEN) {
       lastPingTime = performance.now();
       ws.send(JSON.stringify({ type: "ping" }));
@@ -246,40 +239,38 @@ function mulaiFpsCounter() {
 
 // ─── Input forwarding ─────────────────────────────────────────────────────────
 
-/**
- * Menghitung posisi kursor relatif terhadap resolusi layar agent.
- * Mengonversi koordinat canvas ke koordinat piksel di layar agent.
- */
 function hitungKoordinat(e) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = remoteWidth  / canvas.width;
+  const scaleX = remoteWidth / canvas.width;
   const scaleY = remoteHeight / canvas.height;
   return {
     x: Math.round((e.clientX - rect.left) * scaleX),
-    y: Math.round((e.clientY - rect.top)  * scaleY),
+    y: Math.round((e.clientY - rect.top) * scaleY),
   };
 }
 
 function kirimInput(data) {
   if (!inputEnabled) return;
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
-  if (!agentConnected) return;
+  // FIX #2: Hapus guard agentConnected — biarkan server yang menangani
+  // jika agent tidak ada, server.py sudah handle di kirim_ke_agent()
   ws.send(JSON.stringify({ type: "input", ...data }));
 }
 
-// Mouse move — throttle agar tidak membanjiri server
+// Mouse move
 let lastMoveTime = 0;
 canvas.addEventListener("mousemove", (e) => {
   const now = Date.now();
-  if (now - lastMoveTime < 16) return; // ~60Hz max
+  if (now - lastMoveTime < 16) return;
   lastMoveTime = now;
   const { x, y } = hitungKoordinat(e);
   kirimInput({ action: "mouse_move", x, y });
 });
 
-// Mouse click
 canvas.addEventListener("mousedown", (e) => {
   e.preventDefault();
+  // FIX #2: Fokus ke canvas saat diklik, bukan hanya saat hover
+  canvas.focus();
   const { x, y } = hitungKoordinat(e);
   const tombol = ["left", "middle", "right"][e.button] || "left";
   kirimInput({ action: "mouse_down", x, y, button: tombol });
@@ -297,23 +288,19 @@ canvas.addEventListener("dblclick", (e) => {
   kirimInput({ action: "mouse_click", x, y, button: "left", double: true });
 });
 
-// Scroll
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   const { x, y } = hitungKoordinat(e);
   kirimInput({ action: "mouse_scroll", x, y, dx: e.deltaX, dy: -e.deltaY });
 }, { passive: false });
 
-// Klik kanan: kirim ke remote, jangan tampilkan context menu browser
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
-// Keyboard — tangkap saat fokus pada viewer
+// FIX #2: Pasang tabindex di canvas (bukan hanya viewerArea) agar keyboard bisa ditangkap
+canvas.setAttribute("tabindex", "0");
+canvas.style.outline = "none"; // sembunyikan outline fokus bawaan browser
 viewerArea.setAttribute("tabindex", "0");
 
-/**
- * Tabel konversi dari key browser ke key pyautogui.
- * Hanya key-key khusus yang perlu dimap, huruf/angka biasa langsung diteruskan.
- */
 const KEY_MAP = {
   " ": "space", Enter: "enter", Backspace: "backspace", Tab: "tab",
   Escape: "esc", Delete: "delete", Insert: "insert",
@@ -325,43 +312,41 @@ const KEY_MAP = {
   CapsLock: "capslock", NumLock: "numlock",
 };
 
-const tahan = new Set(); // Tombol yang sedang ditekan
+const tahan = new Set();
 
-viewerArea.addEventListener("keydown", (e) => {
-  // Blokir shortcut browser yang umum agar diteruskan ke remote
-  if (e.ctrlKey && ["a","c","v","x","z","y","r","w","t","n"].includes(e.key.toLowerCase())) {
-    e.preventDefault();
-  }
-  if (e.key === "F11" || e.key === "F5") e.preventDefault();
+// FIX #2: Pasang listener keyboard di canvas DAN viewerArea
+[canvas, viewerArea].forEach(el => {
+  el.addEventListener("keydown", (e) => {
+    if (e.ctrlKey && ["a", "c", "v", "x", "z", "y", "r", "w", "t", "n"].includes(e.key.toLowerCase())) {
+      e.preventDefault();
+    }
+    if (e.key === "F11" || e.key === "F5") e.preventDefault();
 
-  const kunci = KEY_MAP[e.key] || e.key.toLowerCase();
-  if (tahan.has(kunci)) return; // sudah ditekan, skip repeat
-  tahan.add(kunci);
-  kirimInput({ action: "key_down", key: kunci });
+    const kunci = KEY_MAP[e.key] || e.key.toLowerCase();
+    if (tahan.has(kunci)) return;
+    tahan.add(kunci);
+    kirimInput({ action: "key_down", key: kunci });
+  });
+
+  el.addEventListener("keyup", (e) => {
+    const kunci = KEY_MAP[e.key] || e.key.toLowerCase();
+    tahan.delete(kunci);
+    kirimInput({ action: "key_up", key: kunci });
+  });
 });
 
-viewerArea.addEventListener("keyup", (e) => {
-  const kunci = KEY_MAP[e.key] || e.key.toLowerCase();
-  tahan.delete(kunci);
-  kirimInput({ action: "key_up", key: kunci });
-});
-
-// Klik area viewer agar langsung menerima keyboard
+// FIX #2: Fokus ke canvas saat mouse masuk, bukan hanya viewerArea
+canvas.addEventListener("mouseenter", () => canvas.focus());
 viewerArea.addEventListener("mouseenter", () => viewerArea.focus());
 
 // ─── Hotkey buttons ───────────────────────────────────────────────────────────
 
-/**
- * Tombol-tombol shortcut di footer — mengirim kombinasi key ke agent.
- */
 hotkeys.forEach((btn) => {
   btn.addEventListener("click", () => {
     const aksi = btn.dataset.action;
     if (!aksi) return;
 
     const keys = aksi.split("+").map(k => KEY_MAP[k] || k);
-
-    // Tekan semua key lalu lepas semua
     keys.forEach(k => kirimInput({ action: "key_down", key: k }));
     setTimeout(() => {
       [...keys].reverse().forEach(k => kirimInput({ action: "key_up", key: k }));
@@ -406,27 +391,25 @@ function updateAgentStatus(online) {
     statusLabel.textContent = "Agent online";
     statusDot.className = "status-dot connected";
   } else {
-    canvasSudahDisizing = false;
+    resolusiDiketahui = false;
     overlayLoading.hidden = true;
     statusLabel.textContent = "Agent offline";
     statusDot.className = "status-dot offline";
   }
 }
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
+// ─── Resize handler ───────────────────────────────────────────────────────────
 
-/**
- * Inisialisasi saat halaman dimuat.
- * Jika sudah ada JWT di sessionStorage, langsung ke viewer.
- */
 window.addEventListener("resize", () => {
-  if (remoteWidth && remoteHeight) aturUkuranCanvas(remoteWidth, remoteHeight);
+  if (resolusiDiketahui) aturUkuranCanvas(remoteWidth, remoteHeight);
 });
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
 
 (function init() {
   if (jwtToken) {
     tampilViewer();
-    hubungkanWebSocket();
+    setTimeout(hubungkanWebSocket, 100);
   } else {
     tampilLogin();
   }
