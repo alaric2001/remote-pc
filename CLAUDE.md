@@ -106,3 +106,5 @@ Browser clients connect to the ngrok URL automatically — `app.js` derives the 
 | `ping` / `pong` | client ↔ server, agent ↔ server | — |
 
 Input `action` values accepted by `eksekusi_input()`: `mouse_move`, `mouse_click`, `mouse_down`, `mouse_up`, `mouse_scroll`, `key_press`, `key_down`, `key_up`, `key_type`.
+
+gunakan bahasa indonesia

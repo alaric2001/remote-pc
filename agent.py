@@ -185,7 +185,7 @@ async def jalankan_agent() -> None:
             log.info("Menghubungkan ke server: %s", SERVER_URL)
             async with websockets.connect(
                 SERVER_URL,
-                extra_headers=headers,
+                additional_headers=headers,
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
