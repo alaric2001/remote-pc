@@ -14,11 +14,10 @@ import sys
 import time
 
 import mss
-import mss.tools
 import pyautogui
 import websockets
 from dotenv import load_dotenv
-from PIL import Image
+from PIL import Image, ImageGrab
 
 load_dotenv()
 
@@ -43,19 +42,14 @@ log = logging.getLogger(__name__)
 
 def ambil_screenshot() -> str:
     """
-    Menangkap seluruh layar utama menggunakan mss,
+    Menangkap seluruh layar utama menggunakan PIL ImageGrab,
     lalu mengompresnya menjadi JPEG dan mengenkodenya ke base64.
     Mengembalikan string base64 yang siap dikirim via WebSocket.
     """
-    with mss.mss() as sct:
-        monitor = sct.monitors[1]  # layar utama (index 1)
-        shot = sct.grab(monitor)
-        img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
-
+    img = ImageGrab.grab().convert("RGB")
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=SCREENSHOT_QUALITY, optimize=True)
-    raw = buffer.getvalue()
-    return base64.b64encode(raw).decode("utf-8")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
 def eksekusi_input(data: dict) -> None:
@@ -193,9 +187,9 @@ async def jalankan_agent() -> None:
                 log.info("Terhubung ke server. Memulai stream layar...")
 
                 # Kirim info resolusi layar saat koneksi berhasil
-                with mss.mss() as sct:
-                    monitor = sct.monitors[1]
-                    resolusi = {"type": "info", "width": monitor["width"], "height": monitor["height"]}
+                info_layar = ImageGrab.grab()
+                resolusi = {"type": "info", "width": info_layar.width, "height": info_layar.height}
+                info_layar.close()
                 await ws.send(json.dumps(resolusi))
 
                 # Jalankan screenshot sender dan command receiver secara bersamaan
