@@ -50,6 +50,9 @@ agent_ws: Optional[WebSocket] = None
 # Daftar semua client browser yang sedang menonton
 client_list: list[WebSocket] = []
 
+# Info resolusi layar terakhir dari agent (disimpan agar bisa dikirim ke client baru)
+agent_info: Optional[dict] = None
+
 # ─── Inisialisasi aplikasi FastAPI ────────────────────────────────────────────
 
 app = FastAPI(title="Remote PC Control Server", version="1.0.0")
@@ -117,7 +120,7 @@ async def ws_agent(websocket: WebSocket):
     Autentikasi menggunakan AGENT_TOKEN di header Authorization.
     Setelah terhubung, agent mengirim frame screenshot dan menerima perintah input.
     """
-    global agent_ws
+    global agent_ws, agent_info
 
     # Verifikasi token agent dari header
     token = _ambil_bearer_token(websocket)
@@ -147,7 +150,8 @@ async def ws_agent(websocket: WebSocket):
                 await broadcast_ke_client(data)
 
             elif tipe == "info":
-                # Informasi resolusi layar dari agent, broadcast ke client
+                # Simpan info resolusi agar bisa dikirim ulang ke client yang konek belakangan
+                agent_info = data
                 log.info("Info layar agent: %dx%d", data.get("width", 0), data.get("height", 0))
                 await broadcast_ke_client(data)
 
@@ -191,6 +195,10 @@ async def ws_client(websocket: WebSocket):
         "type": "agent_status",
         "connected": agent_ws is not None,
     }))
+
+    # Kirim ulang info resolusi terakhir jika agent sudah terhubung sebelumnya
+    if agent_info:
+        await websocket.send_text(json.dumps(agent_info))
 
     try:
         async for pesan in websocket.iter_text():

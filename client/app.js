@@ -192,6 +192,8 @@ function handlePesan(data) {
 
 // ─── Render frame ─────────────────────────────────────────────────────────────
 
+let canvasSudahDisizing = false;
+
 /**
  * Menghitung dan menetapkan ukuran canvas agar proporsional dengan resolusi agent.
  * Dipanggil sekali saat pesan "info" diterima — bukan setiap frame.
@@ -202,17 +204,22 @@ function aturUkuranCanvas(w, h) {
   const scale = Math.min(area.width / w, area.height / h);
   canvas.width  = Math.floor(w * scale);
   canvas.height = Math.floor(h * scale);
+  canvasSudahDisizing = true;
 }
 
 /**
  * Mendekode string base64 JPEG dan menggambar ke canvas.
- * Tidak mengubah ukuran canvas agar tidak terjadi flash hitam antar frame.
+ * Jika info resolusi belum diterima, sizing dilakukan dari dimensi gambar pertama.
  */
 function renderFrame(base64Data) {
   overlayLoading.hidden = true;
 
   const img = new Image();
   img.onload = () => {
+    // Fallback: sizing dari frame pertama jika pesan "info" belum diterima
+    if (!canvasSudahDisizing) {
+      aturUkuranCanvas(img.naturalWidth, img.naturalHeight);
+    }
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     frameCount++;
   };
@@ -399,6 +406,7 @@ function updateAgentStatus(online) {
     statusLabel.textContent = "Agent online";
     statusDot.className = "status-dot connected";
   } else {
+    canvasSudahDisizing = false;
     overlayLoading.hidden = true;
     statusLabel.textContent = "Agent offline";
     statusDot.className = "status-dot offline";

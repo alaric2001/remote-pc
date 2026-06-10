@@ -28,6 +28,7 @@ Browser (client)                Server (relay)               Agent (PC target)
      │◄── JWT token ─────────────────│                               │
      │                               │◄─── WS /ws/agent ────────────│
      │── WS /ws/client?token=... ───►│                               │
+     │◄── agent_status + info ───────│  (re-sent even if late join)  │
      │                               │◄─── frame (base64 JPEG) ─────│
      │◄── frame ─────────────────────│                               │
      │── input (mouse/keyboard) ────►│                               │
@@ -39,13 +40,14 @@ Browser (client)                Server (relay)               Agent (PC target)
 
 ## Fitur
 
-- **Live screen streaming** — screenshot diambil dengan `mss`, dikompresi JPEG, dikirim via WebSocket, dirender ke `<canvas>`
+- **Live screen streaming** — screenshot diambil dengan `PIL.ImageGrab`, dikompresi JPEG, dikirim via WebSocket, dirender ke `<canvas>`
 - **Full mouse control** — move, click, double-click, klik kanan, scroll (horizontal & vertikal)
 - **Full keyboard control** — key down/up dengan deduplication, intercept shortcut browser (Ctrl+C, Ctrl+V, F5, dll.)
 - **Hotkey buttons** — Ctrl+Alt+Del, Win, Alt+Tab, dan lainnya langsung dari UI
 - **JWT authentication** — sesi browser dengan token short-lived, otomatis logout saat tab ditutup
 - **Auto-reconnect** — agent dan browser reconnect otomatis jika koneksi terputus
 - **Multi-viewer** — beberapa browser bisa menonton sekaligus
+- **Late-join safe** — server menyimpan info resolusi terakhir dan mengirimnya ke client yang konek belakangan
 - **Tunnel support** — siap deploy via Ngrok static domain tanpa config tambahan
 - **FPS & latency monitor** — statistik real-time di toolbar
 
@@ -56,7 +58,7 @@ Browser (client)                Server (relay)               Agent (PC target)
 | Layer | Teknologi |
 |---|---|
 | Relay server | Python · FastAPI · Uvicorn · WebSocket |
-| Agent | Python · mss · Pillow · pyautogui |
+| Agent | Python · Pillow (ImageGrab) · pyautogui |
 | Auth | python-jose (JWT HS256) |
 | Frontend | HTML5 · Vanilla JS · Canvas API |
 | Tunnel | Ngrok static domain |
@@ -73,17 +75,17 @@ Tiga proses berjalan secara independen dan berkomunikasi lewat relay server:
 │  agent.py   │ ──────────────────►  │  server.py   │ ◄──────────────────  │   Browser   │
 │  (target)   │ ◄────────────────── │   (relay)    │ ──────────────────►  │  (viewer)   │
 └─────────────┘    input commands    └──────────────┘    frame + status    └─────────────┘
-     mss                               FastAPI                               Canvas API
+  ImageGrab                            FastAPI                               Canvas API
   pyautogui                            JWT Auth                              Vanilla JS
 ```
 
 **Alur screen stream:**
-`mss.grab()` → JPEG compress → base64 encode → JSON `{type:"frame"}` → WebSocket → `broadcast_ke_client()` → `renderFrame()` → `canvas.drawImage()`
+`ImageGrab.grab()` → JPEG compress → base64 encode → JSON `{type:"frame"}` → WebSocket → `broadcast_ke_client()` → `renderFrame()` → `canvas.drawImage()`
 
 **Alur input:**
 Canvas event → `hitungKoordinat()` (scale ke resolusi agent) → `kirimInput()` → WebSocket → `eksekusi_input()` → `pyautogui`
 
-**Scaling koordinat** adalah inti dari sinkronisasi input. Saat pertama konek, agent mengirim resolusi layarnya (`{type:"info", width, height}`). Setiap koordinat mouse dikalikan `remoteWidth / canvas.width` sebelum dikirim, sehingga klik tetap akurat di resolusi berapa pun.
+**Scaling koordinat** adalah inti dari sinkronisasi input. Saat pertama konek, agent mengirim resolusi layarnya (`{type:"info", width, height}`). Server menyimpan info ini dan mengirimnya ke setiap browser client yang konek — termasuk yang konek belakangan setelah agent sudah online. Setiap koordinat mouse dikalikan `remoteWidth / canvas.width` sebelum dikirim.
 
 ---
 
@@ -114,7 +116,7 @@ python -c "import secrets; print(secrets.token_hex(32))"
 # Jalankan dua kali: hasil pertama → JWT_SECRET, kedua → AGENT_TOKEN
 ```
 
-### Menjalankan
+### Menjalankan (lokal)
 
 ```bash
 # Terminal 1 — relay server
@@ -130,34 +132,43 @@ Login menggunakan nilai `AGENT_TOKEN` dari file `.env` sebagai password.
 
 ### Deploy dengan Ngrok
 
+Jalankan ketiga proses di terminal terpisah, **urutan ini penting**:
+
 ```bash
-# Isi NGROK_AUTH_TOKEN dan NGROK_STATIC_DOMAIN di .env
-# Lalu jalankan ngrok
+# Terminal 1
+python server.py
+
+# Terminal 2
 ngrok http 8000 --domain=your-static-domain.ngrok-free.app
+
+# Terminal 3 (PC target — pastikan SERVER_URL di .env sudah pakai wss://)
+python agent.py
 ```
 
-Update `SERVER_URL` di `.env` agent:
+Update `SERVER_URL` di `.env` pada PC target:
 ```
 SERVER_URL=wss://your-static-domain.ngrok-free.app/ws/agent
 ```
+
+> **Penting:** Ngrok selalu menggunakan HTTPS/WSS. Gunakan `wss://` bukan `ws://` — menggunakan `ws://` akan menyebabkan error koneksi di agent.
+
+Buka browser ke: **`https://your-static-domain.ngrok-free.app`**
 
 ---
 
 ## Konfigurasi
 
-Semua konfigurasi via file `.env`:
-
-| Variable | Default | Keterangan |
-|---|---|---|
-| `JWT_SECRET` | — | Secret key untuk signing JWT (**wajib**) |
-| `AGENT_TOKEN` | — | Token autentikasi agent & password login (**wajib**) |
-| `HOST` | `0.0.0.0` | Bind address server |
-| `PORT` | `8000` | Port server |
-| `SCREENSHOT_FPS` | `10` | Frame per detik yang dikirim agent |
-| `SCREENSHOT_QUALITY` | `50` | Kualitas JPEG (1–100) |
-| `RECONNECT_DELAY` | `3` | Detik sebelum reconnect |
-| `JWT_EXPIRE_MINUTES` | `60` | Masa berlaku JWT |
-| `SERVER_URL` | `ws://localhost:8000/ws/agent` | URL server untuk agent |
+| Variable | PC Server | PC Target | Default | Keterangan |
+|---|---|---|---|---|
+| `JWT_SECRET` | ✅ | — | — | Secret key JWT (**wajib**) |
+| `AGENT_TOKEN` | ✅ | ✅ | — | Token auth & password login (**wajib, harus sama**) |
+| `HOST` | ✅ | — | `0.0.0.0` | Bind address server |
+| `PORT` | ✅ | — | `8000` | Port server |
+| `SERVER_URL` | — | ✅ | `ws://localhost:8000/ws/agent` | URL relay server untuk agent |
+| `SCREENSHOT_FPS` | — | ✅ | `10` | Frame per detik |
+| `SCREENSHOT_QUALITY` | — | ✅ | `50` | Kualitas JPEG (1–100) |
+| `RECONNECT_DELAY` | — | ✅ | `3` | Detik sebelum reconnect |
+| `JWT_EXPIRE_MINUTES` | ✅ | — | `60` | Masa berlaku JWT |
 
 ---
 

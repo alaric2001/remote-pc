@@ -37,7 +37,7 @@ agent.py  ──WS /ws/agent──►  server.py  ◄──WS /ws/client──  
 ```
 
 **Data flow — screen stream:**
-`agent.py` captures screen with `mss` → compresses to JPEG → encodes base64 → sends JSON `{type:"frame", data:"..."}` → server broadcasts to all entries in `client_list` → browser decodes base64 in `renderFrame()` → draws to `<canvas>`.
+`agent.py` captures screen with `PIL.ImageGrab` → compresses to JPEG → encodes base64 → sends JSON `{type:"frame", data:"..."}` → server broadcasts to all entries in `client_list` → browser decodes base64 in `renderFrame()` → draws to `<canvas>`.
 
 **Data flow — input commands:**
 Browser canvas events → `hitungKoordinat()` scales to agent screen resolution → `kirimInput()` sends JSON `{type:"input", action:"...", ...}` → server forwards to `agent_ws` → `eksekusi_input()` calls pyautogui.
@@ -69,11 +69,18 @@ Browser WebSocket sends JWT as query param (`?token=`) because the browser WebSo
 
 ## Server state
 
-`server.py` holds two module-level globals:
+`server.py` holds three module-level globals:
 - `agent_ws: Optional[WebSocket]` — only one agent at a time; replaced if a new one connects
 - `client_list: list[WebSocket]` — multiple browser viewers allowed simultaneously
+- `agent_info: Optional[dict]` — last `{type:"info", width, height}` from agent; re-sent to any browser client that connects after the agent
 
 `broadcast_ke_client()` silently removes dead connections during each broadcast — no explicit cleanup loop.
+
+When a new browser client connects, the server immediately sends two messages: `agent_status` and (if available) `agent_info`. This ensures the browser always knows the agent's screen resolution even if it connects after the agent.
+
+## Canvas sizing (client)
+
+Canvas is sized **once** via `aturUkuranCanvas(w, h)` when the `info` message arrives — resizing on every frame would clear the canvas causing a black flash. A `canvasSudahDisizing` flag guards against double-sizing. If `info` somehow arrives late, `renderFrame()` has a fallback that sizes the canvas from the first frame's natural dimensions (`img.naturalWidth/Height`). The flag resets when the agent disconnects so the canvas is re-sized correctly on reconnect.
 
 ## Ngrok (remote access)
 
@@ -85,7 +92,17 @@ Then update `SERVER_URL` in `.env` on the agent machine:
 ```
 SERVER_URL=wss://your-static-domain.ngrok-free.app/ws/agent
 ```
+**Important:** Ngrok always uses HTTPS/WSS — use `wss://` not `ws://`. Using `ws://` with a ngrok domain causes a redirect to `https://` that the websockets library cannot follow, resulting in an invalid URI error.
+
 Browser clients connect to the ngrok URL automatically — `app.js` derives the WS URL from `window.location.origin`.
+
+## Startup order
+
+```
+python server.py  →  ngrok http 8000  →  python agent.py  →  open browser
+```
+
+Agent auto-reconnects every `RECONNECT_DELAY` seconds if server is not yet up — order matters but the agent is tolerant of a missing server.
 
 ## Conventions
 
