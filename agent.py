@@ -17,7 +17,7 @@ import mss
 import pyautogui
 import websockets
 from dotenv import load_dotenv
-from PIL import Image, ImageGrab
+from PIL import Image
 
 load_dotenv()
 
@@ -42,14 +42,19 @@ log = logging.getLogger(__name__)
 
 def ambil_screenshot() -> str:
     """
-    Menangkap seluruh layar utama menggunakan PIL ImageGrab,
+    Menangkap seluruh layar utama menggunakan mss,
     lalu mengompresnya menjadi JPEG dan mengenkodenya ke base64.
     Mengembalikan string base64 yang siap dikirim via WebSocket.
     """
-    img = ImageGrab.grab().convert("RGB")
+    with mss.MSS() as sct:
+        monitor = sct.monitors[1]  # layar utama (index 1)
+        shot = sct.grab(monitor)
+        img = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
+
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=SCREENSHOT_QUALITY, optimize=True)
-    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+    raw = buffer.getvalue()
+    return base64.b64encode(raw).decode("utf-8")
 
 
 def eksekusi_input(data: dict) -> None:
@@ -118,7 +123,31 @@ def eksekusi_input(data: dict) -> None:
         log.error("Gagal eksekusi input '%s': %s", aksi, e)
 
 
-async def kirim_screenshot(ws) -> None:
+def bersihkan_state_input() -> None:
+    """
+    Melepaskan semua tombol modifier dan tombol mouse yang mungkin tersangkut.
+    Dipanggil saat koneksi terputus atau program dihentikan.
+    """
+    log.info("Membersihkan state input (melepaskan semua tombol modifier & mouse)...")
+    
+    # Modifier keys yang rawan stuck
+    modifier_keys = ["ctrl", "shift", "alt", "win"]
+    for kunci in modifier_keys:
+        try:
+            pyautogui.keyUp(kunci)
+        except Exception:
+            pass
+
+    # Tombol mouse
+    tombol_mouse = ["left", "right", "middle"]
+    for tombol in tombol_mouse:
+        try:
+            pyautogui.mouseUp(button=tombol)
+        except Exception:
+            pass
+
+
+async def kirim_screenshot(ws: websockets.WebSocketClientProtocol) -> None:
     """
     Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS.
     Berjalan sebagai coroutine terpisah bersamaan dengan penerima perintah.
@@ -143,7 +172,7 @@ async def kirim_screenshot(ws) -> None:
             await asyncio.sleep(sisa)
 
 
-async def terima_perintah(ws) -> None:
+async def terima_perintah(ws: websockets.WebSocketClientProtocol) -> None:
     """
     Loop penerimaan perintah input dari server.
     Setiap pesan JSON yang masuk dieksekusi oleh eksekusi_input().
@@ -179,7 +208,7 @@ async def jalankan_agent() -> None:
             log.info("Menghubungkan ke server: %s", SERVER_URL)
             async with websockets.connect(
                 SERVER_URL,
-                additional_headers=headers,
+                extra_headers=headers,
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
@@ -187,9 +216,9 @@ async def jalankan_agent() -> None:
                 log.info("Terhubung ke server. Memulai stream layar...")
 
                 # Kirim info resolusi layar saat koneksi berhasil
-                info_layar = ImageGrab.grab()
-                resolusi = {"type": "info", "width": info_layar.width, "height": info_layar.height}
-                info_layar.close()
+                with mss.MSS() as sct:
+                    monitor = sct.monitors[1]
+                    resolusi = {"type": "info", "width": monitor["width"], "height": monitor["height"]}
                 await ws.send(json.dumps(resolusi))
 
                 # Jalankan screenshot sender dan command receiver secara bersamaan
@@ -197,17 +226,22 @@ async def jalankan_agent() -> None:
                     kirim_screenshot(ws),
                     terima_perintah(ws),
                 )
+            
+            # Bersihkan input jika loop normal selesai/terputus
+            bersihkan_state_input()
 
-        except websockets.exceptions.InvalidStatus as e:
-            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.response.status_code)
+        except websockets.InvalidStatusCode as e:
+            log.error("Koneksi ditolak server (status %s). Cek AGENT_TOKEN.", e.status_code)
             await asyncio.sleep(RECONNECT_DELAY * 2)
 
         except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
             log.warning("Koneksi terputus: %s. Mencoba reconnect dalam %ds...", e, RECONNECT_DELAY)
+            bersihkan_state_input()
             await asyncio.sleep(RECONNECT_DELAY)
 
         except Exception as e:
             log.error("Error tidak terduga: %s. Reconnect dalam %ds...", e, RECONNECT_DELAY)
+            bersihkan_state_input()
             await asyncio.sleep(RECONNECT_DELAY)
 
 
@@ -222,3 +256,5 @@ if __name__ == "__main__":
         asyncio.run(jalankan_agent())
     except KeyboardInterrupt:
         log.info("Agent dihentikan oleh pengguna.")
+    finally:
+        bersihkan_state_input()
