@@ -18,6 +18,7 @@ import pyautogui
 import websockets
 from dotenv import load_dotenv
 from PIL import Image
+from pynput.keyboard import Key, Controller as KeyboardController
 
 load_dotenv()
 
@@ -42,6 +43,31 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+# ─── Keyboard controller (pynput) ────────────────────────────────────────────
+
+_keyboard = KeyboardController()
+
+# Pemetaan nama kunci dari browser ke pynput Key enum
+_PYNPUT_KEY_MAP: dict = {
+    "enter": Key.enter, "backspace": Key.backspace, "tab": Key.tab,
+    "esc": Key.esc, "escape": Key.esc,
+    "delete": Key.delete, "insert": Key.insert,
+    "home": Key.home, "end": Key.end,
+    "pageup": Key.page_up, "pagedown": Key.page_down,
+    "up": Key.up, "down": Key.down, "left": Key.left, "right": Key.right,
+    "space": Key.space,
+    "ctrl": Key.ctrl, "shift": Key.shift, "alt": Key.alt, "win": Key.cmd,
+    "capslock": Key.caps_lock, "numlock": Key.num_lock,
+    "f1": Key.f1,  "f2": Key.f2,  "f3": Key.f3,  "f4": Key.f4,
+    "f5": Key.f5,  "f6": Key.f6,  "f7": Key.f7,  "f8": Key.f8,
+    "f9": Key.f9,  "f10": Key.f10, "f11": Key.f11, "f12": Key.f12,
+}
+
+
+def _terjemah_kunci(nama: str):
+    """Terjemahkan nama kunci dari browser ke pynput Key atau karakter."""
+    return _PYNPUT_KEY_MAP.get(nama, nama)
 
 # ─── win32 ───────────────────────────────────────────────────────────────────
 
@@ -250,16 +276,17 @@ def eksekusi_input(data: dict) -> None:
                 if dy != 0: pyautogui.scroll(int(dy / 100))
 
         elif aksi == "key_press":
-            log.info("Key press: %s", data["key"])
-            pyautogui.press(data["key"])
+            k = _terjemah_kunci(data["key"])
+            _keyboard.press(k)
+            _keyboard.release(k)
         elif aksi == "key_down":
-            log.info("Key down: %s", data["key"])
-            pyautogui.keyDown(data["key"])
+            _keyboard.press(_terjemah_kunci(data["key"]))
         elif aksi == "key_up":
-            pyautogui.keyUp(data["key"])
+            _keyboard.release(_terjemah_kunci(data["key"]))
         elif aksi == "key_type":
-            pyautogui.write(data["text"], interval=0.02)
-        else: log.warning("Aksi tidak dikenal: %s", aksi)
+            _keyboard.type(data["text"])
+        else:
+            log.warning("Aksi tidak dikenal: %s", aksi)
 
     except Exception as e:
         log.error("Gagal eksekusi input '%s': %s", aksi, e)
@@ -267,8 +294,8 @@ def eksekusi_input(data: dict) -> None:
 
 def bersihkan_state_input() -> None:
     log.info("Membersihkan state input...")
-    for k in ["ctrl", "shift", "alt", "win"]:
-        try: pyautogui.keyUp(k)
+    for k in [Key.ctrl, Key.shift, Key.alt, Key.cmd]:
+        try: _keyboard.release(k)
         except Exception: pass
     for t in ["left", "right", "middle"]:
         try: pyautogui.mouseUp(button=t)
@@ -295,6 +322,13 @@ async def kirim_screenshot(ws) -> None:
         await asyncio.sleep(max(0, sisa))
 
 
+def _log_error_executor(fut: asyncio.Future) -> None:
+    """Callback untuk menangkap exception dari executor yang tidak di-await."""
+    exc = fut.exception()
+    if exc:
+        log.error("Error eksekusi input di thread: %s", exc)
+
+
 async def terima_perintah(ws) -> None:
     loop = asyncio.get_event_loop()
     async for pesan in ws:
@@ -302,8 +336,8 @@ async def terima_perintah(ws) -> None:
             data = json.loads(pesan)
             tipe = data.get("type")
             if tipe == "input":
-                # Jalankan di thread agar tidak memblokir event loop
-                loop.run_in_executor(None, eksekusi_input, data)
+                fut = loop.run_in_executor(None, eksekusi_input, data)
+                fut.add_done_callback(_log_error_executor)
             elif tipe == "ping":
                 await ws.send(json.dumps({"type": "pong"}))
             else:
