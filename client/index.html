@@ -43,6 +43,14 @@
         </button>
         <p id="login-error" class="error-msg" hidden></p>
       </form>
+
+      <!-- Tombol ganti koneksi di halaman login -->
+      <button id="btn-koneksi-login" class="koneksi-badge-btn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+          <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+        </svg>
+        <span id="label-koneksi-login">LAN</span>
+      </button>
     </div>
   </div>
 
@@ -68,6 +76,15 @@
           <span id="info-ping">— ms</span>
           <span id="info-res">—</span>
         </div>
+
+        <!-- Badge koneksi aktif + tombol settings -->
+        <button id="btn-settings" class="koneksi-badge-btn" title="Pengaturan koneksi">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12">
+            <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+          <span id="label-koneksi-aktif">LAN</span>
+        </button>
+
         <button id="btn-fullscreen" class="icon-btn" title="Fullscreen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3"/>
@@ -83,8 +100,6 @@
 
     <!-- Area viewer utama -->
     <main class="viewer-area" id="viewer-area">
-
-      <!-- Overlay: agent offline -->
       <div id="overlay-offline" class="overlay">
         <div class="overlay-content">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -96,7 +111,6 @@
         </div>
       </div>
 
-      <!-- Overlay: loading -->
       <div id="overlay-loading" class="overlay" hidden>
         <div class="overlay-content">
           <div class="spinner-ring"></div>
@@ -104,9 +118,7 @@
         </div>
       </div>
 
-      <!-- Canvas tampilan layar remote -->
       <canvas id="canvas-screen"></canvas>
-
     </main>
 
     <!-- Toolbar bawah: keyboard shortcuts -->
@@ -124,6 +136,78 @@
       </div>
     </footer>
 
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       MODAL PENGATURAN KONEKSI
+  ═══════════════════════════════════════════ -->
+  <div id="modal-koneksi" class="modal-backdrop" hidden>
+    <div class="modal-card">
+
+      <div class="modal-header">
+        <h2>Pengaturan Koneksi</h2>
+        <button id="btn-tutup-modal" class="icon-btn">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M18 6 6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Tab LAN / Ngrok -->
+      <div class="modal-tabs">
+        <button class="tab-btn active" data-tipe="lan">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <rect x="2" y="3" width="20" height="14" rx="2"/>
+            <path d="M8 21h8M12 17v4"/>
+          </svg>
+          LAN
+        </button>
+        <button class="tab-btn" data-tipe="ngrok">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+          Ngrok
+        </button>
+      </div>
+
+      <!-- Panel LAN -->
+      <div id="panel-lan" class="modal-panel">
+        <div class="modal-info lan-info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+          Latensi rendah · Hanya untuk jaringan yang sama
+        </div>
+        <div class="input-group">
+          <label for="input-lan">IP Server : Port</label>
+          <input id="input-lan" type="text" placeholder="192.168.1.100:8000" spellcheck="false" />
+        </div>
+        <p class="modal-hint">Temukan IP server dengan menjalankan <code>ipconfig</code> di PC server.</p>
+      </div>
+
+      <!-- Panel Ngrok -->
+      <div id="panel-ngrok" class="modal-panel" hidden>
+        <div class="modal-info ngrok-info">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+            <circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+          </svg>
+          Akses dari internet · Latensi lebih tinggi (~100–400ms)
+        </div>
+        <div class="input-group">
+          <label for="input-ngrok">Domain Ngrok</label>
+          <input id="input-ngrok" type="text" placeholder="your-domain.ngrok-free.app" spellcheck="false" />
+        </div>
+        <p class="modal-hint">Tanpa <code>https://</code> — hanya domainnya saja.</p>
+      </div>
+
+      <button id="btn-terapkan" class="btn-terapkan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" width="15" height="15">
+          <path d="M5 12h14M12 5l7 7-7 7"/>
+        </svg>
+        Sambungkan
+      </button>
+
+    </div>
   </div>
 
   <script src="app.js"></script>

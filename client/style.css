@@ -417,6 +417,152 @@ body {
   cursor: pointer;
 }
 
+/* ─── Badge koneksi ──────────────────────────────────────────────────────────── */
+
+.koneksi-badge-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: .75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  transition: color .15s, border-color .15s;
+  letter-spacing: .3px;
+}
+
+.koneksi-badge-btn:hover { color: var(--text); border-color: var(--accent); }
+
+/* Di halaman login, posisikan badge di bawah form */
+#btn-koneksi-login {
+  margin-top: 6px;
+  align-self: center;
+}
+
+/* ─── Modal koneksi ──────────────────────────────────────────────────────────── */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn .15s ease;
+}
+
+.modal-backdrop[hidden] { display: none !important; }
+
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 24px;
+  width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: 0 32px 80px rgba(0,0,0,.6);
+  animation: slideUp .2s ease;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-header h2 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.modal-tabs {
+  display: flex;
+  gap: 8px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 4px;
+}
+
+.tab-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  border-radius: 7px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: .85rem;
+  font-weight: 600;
+  padding: 8px;
+  transition: background .15s, color .15s;
+}
+
+.tab-btn.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+
+.modal-panel { display: flex; flex-direction: column; gap: 10px; }
+.modal-panel[hidden] { display: none !important; }
+
+.modal-info {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: .78rem;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.lan-info   { background: rgba(76,222,128,.1);  color: #4cde80; border: 1px solid rgba(76,222,128,.2); }
+.ngrok-info { background: rgba(255,210,96,.1);  color: #ffd260; border: 1px solid rgba(255,210,96,.2); }
+
+.modal-hint {
+  font-size: .78rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.modal-hint code {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: .75rem;
+}
+
+.btn-terapkan {
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: .9rem;
+  font-weight: 600;
+  padding: 11px;
+  transition: background .15s, transform .1s;
+}
+
+.btn-terapkan:hover  { background: var(--accent-hover); }
+.btn-terapkan:active { transform: scale(.98); }
+
 /* ─── Animasi ────────────────────────────────────────────────────────────────── */
 
 @keyframes spin {
@@ -426,13 +572,16 @@ body {
 }
 
 @keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .3; }
+}
 
-  0%,
-  100% {
-    opacity: 1;
-  }
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 
-  50% {
-    opacity: .3;
-  }
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

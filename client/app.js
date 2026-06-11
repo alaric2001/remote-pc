@@ -3,13 +3,31 @@
  * Menangani: login, koneksi WebSocket, render frame, dan forward input.
  */
 
-// ─── Konfigurasi ─────────────────────────────────────────────────────────────
+// ─── Konfigurasi koneksi (dinamis, disimpan di localStorage) ─────────────────
 
-const SERVER_ORIGIN = window.location.origin;
-const WS_ORIGIN = SERVER_ORIGIN.replace(/^http/, "ws");
+function getKoneksiConfig() {
+  return {
+    tipe:  localStorage.getItem("koneksi_tipe")  || "lan",
+    lan:   localStorage.getItem("koneksi_lan")   || window.location.host,
+    ngrok: localStorage.getItem("koneksi_ngrok") || "",
+  };
+}
 
-const API_LOGIN = `${SERVER_ORIGIN}/auth/login`;
-const WS_CLIENT = `${WS_ORIGIN}/ws/client`;
+function simpanKoneksiConfig(tipe, lan, ngrok) {
+  localStorage.setItem("koneksi_tipe",  tipe);
+  localStorage.setItem("koneksi_lan",   lan);
+  localStorage.setItem("koneksi_ngrok", ngrok);
+}
+
+function getServerOrigin() {
+  const cfg = getKoneksiConfig();
+  if (cfg.tipe === "ngrok" && cfg.ngrok) return `https://${cfg.ngrok}`;
+  return `http://${cfg.lan || window.location.host}`;
+}
+
+function getWsOrigin() { return getServerOrigin().replace(/^http/, "ws"); }
+function getApiLogin() { return `${getServerOrigin()}/auth/login`; }
+function getWsClient() { return `${getWsOrigin()}/ws/client`; }
 
 // ─── Elemen DOM ───────────────────────────────────────────────────────────────
 
@@ -64,7 +82,7 @@ formLogin.addEventListener("submit", async (e) => {
   tampilError("");
 
   try {
-    const res = await fetch(API_LOGIN, {
+    const res = await fetch(getApiLogin(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: inputPwd.value }),
@@ -120,7 +138,7 @@ function hubungkanWebSocket() {
   if (ws && ws.readyState === WebSocket.OPEN) return;
 
   updateStatus("connecting");
-  const url = `${WS_CLIENT}?token=${encodeURIComponent(jwtToken)}`;
+  const url = `${getWsClient()}?token=${encodeURIComponent(jwtToken)}`;
   ws = new WebSocket(url);
   ws.binaryType = "arraybuffer";
 
@@ -360,6 +378,86 @@ toggleInput.addEventListener("change", () => {
   inputEnabled = toggleInput.checked;
 });
 
+// ─── Modal Koneksi ────────────────────────────────────────────────────────────
+
+const modalKoneksi    = document.getElementById("modal-koneksi");
+const btnSettings     = document.getElementById("btn-settings");
+const btnKoneksiLogin = document.getElementById("btn-koneksi-login");
+const btnTutupModal   = document.getElementById("btn-tutup-modal");
+const btnTerapkan     = document.getElementById("btn-terapkan");
+const inputLan        = document.getElementById("input-lan");
+const inputNgrok      = document.getElementById("input-ngrok");
+const panelLan        = document.getElementById("panel-lan");
+const panelNgrok      = document.getElementById("panel-ngrok");
+const tabBtns         = document.querySelectorAll(".tab-btn");
+const labelKoneksiAktif  = document.getElementById("label-koneksi-aktif");
+const labelKoneksiLogin  = document.getElementById("label-koneksi-login");
+
+let tipeAktif = getKoneksiConfig().tipe;
+
+function updateBadgeKoneksi() {
+  const teks = tipeAktif === "ngrok" ? "Ngrok" : "LAN";
+  if (labelKoneksiAktif)  labelKoneksiAktif.textContent  = teks;
+  if (labelKoneksiLogin)  labelKoneksiLogin.textContent  = teks;
+}
+
+function bukaModal() {
+  const cfg = getKoneksiConfig();
+  tipeAktif = cfg.tipe;
+  inputLan.value   = cfg.lan;
+  inputNgrok.value = cfg.ngrok;
+  setTabAktif(tipeAktif);
+  modalKoneksi.hidden = false;
+}
+
+function tutupModal() {
+  modalKoneksi.hidden = true;
+}
+
+function setTabAktif(tipe) {
+  tipeAktif = tipe;
+  tabBtns.forEach(btn => btn.classList.toggle("active", btn.dataset.tipe === tipe));
+  panelLan.hidden   = (tipe !== "lan");
+  panelNgrok.hidden = (tipe !== "ngrok");
+}
+
+tabBtns.forEach(btn => {
+  btn.addEventListener("click", () => setTabAktif(btn.dataset.tipe));
+});
+
+btnSettings.addEventListener("click",     bukaModal);
+btnKoneksiLogin.addEventListener("click", bukaModal);
+btnTutupModal.addEventListener("click",   tutupModal);
+
+// Klik di luar modal untuk menutup
+modalKoneksi.addEventListener("click", (e) => {
+  if (e.target === modalKoneksi) tutupModal();
+});
+
+btnTerapkan.addEventListener("click", () => {
+  const lan   = inputLan.value.trim();
+  const ngrok = inputNgrok.value.trim().replace(/^https?:\/\//, "");
+
+  if (tipeAktif === "lan" && !lan) {
+    inputLan.focus();
+    return;
+  }
+  if (tipeAktif === "ngrok" && !ngrok) {
+    inputNgrok.focus();
+    return;
+  }
+
+  simpanKoneksiConfig(tipeAktif, lan, ngrok);
+  updateBadgeKoneksi();
+  tutupModal();
+
+  // Putuskan koneksi lama dan reconnect ke server baru
+  sessionStorage.removeItem("jwt_token");
+  jwtToken = null;
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  tampilLogin();
+});
+
 btnFullscreen.addEventListener("click", () => {
   if (!document.fullscreenElement) {
     viewerArea.requestFullscreen();
@@ -407,6 +505,7 @@ window.addEventListener("resize", () => {
 // ─── Init ─────────────────────────────────────────────────────────────────────
 
 (function init() {
+  updateBadgeKoneksi();
   if (jwtToken) {
     tampilViewer();
     setTimeout(hubungkanWebSocket, 100);
