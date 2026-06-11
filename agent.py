@@ -114,45 +114,100 @@ def ambil_screenshot() -> str:
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
+def _mouse_event_absolut(x: int, y: int, flags: int, data: int = 0) -> None:
+    """
+    Kirim event mouse dengan koordinat absolut menggunakan win32api.mouse_event.
+    Koordinat dinormalisasi ke rentang 0-65535 agar kompatibel dengan game
+    yang menggunakan raw/direct input (seperti Roblox).
+    Fallback ke pyautogui jika win32 tidak tersedia.
+    """
+    if WIN32_TERSEDIA:
+        lebar, tinggi = pyautogui.size()
+        nx = int(x * 65535 / lebar)
+        ny = int(y * 65535 / tinggi)
+        # Pindahkan mouse ke posisi absolut terlebih dahulu
+        win32api.mouse_event(
+            win32con.MOUSEEVENTF_MOVE | win32con.MOUSEEVENTF_ABSOLUTE,
+            nx, ny, 0, 0
+        )
+        # Kirim event klik/down/up jika ada
+        if flags:
+            win32api.mouse_event(flags, nx, ny, data, 0)
+    else:
+        # Fallback pyautogui — tidak semua game mendukung ini
+        pyautogui.moveTo(x, y, duration=0)
+
+
+# Mapping nama tombol ke flag win32con untuk mouse down dan mouse up
+_TOMBOL_FLAGS = {
+    "left":   (win32con.MOUSEEVENTF_LEFTDOWN,   win32con.MOUSEEVENTF_LEFTUP)   if WIN32_TERSEDIA else (0, 0),
+    "right":  (win32con.MOUSEEVENTF_RIGHTDOWN,  win32con.MOUSEEVENTF_RIGHTUP)  if WIN32_TERSEDIA else (0, 0),
+    "middle": (win32con.MOUSEEVENTF_MIDDLEDOWN, win32con.MOUSEEVENTF_MIDDLEUP) if WIN32_TERSEDIA else (0, 0),
+}
+
+
 def eksekusi_input(data: dict) -> None:
     """
     Mengeksekusi perintah input yang diterima dari server.
-    Mendukung: mouse_move, mouse_click, mouse_scroll, key_press, key_type.
+    Operasi mouse menggunakan win32api untuk kompatibilitas game (Roblox, dll).
+    Keyboard tetap menggunakan pyautogui.
     """
     aksi = data.get("action")
 
     try:
         if aksi == "mouse_move":
             x, y = data["x"], data["y"]
-            pyautogui.moveTo(x, y, duration=0)
+            _mouse_event_absolut(x, y, 0)
+
+        elif aksi == "mouse_down":
+            x, y = data["x"], data["y"]
+            tombol = data.get("button", "left")
+            flag_down, _ = _TOMBOL_FLAGS.get(tombol, (0, 0))
+            if WIN32_TERSEDIA and flag_down:
+                _mouse_event_absolut(x, y, flag_down)
+            else:
+                pyautogui.mouseDown(x, y, button=tombol)
+
+        elif aksi == "mouse_up":
+            x, y = data["x"], data["y"]
+            tombol = data.get("button", "left")
+            _, flag_up = _TOMBOL_FLAGS.get(tombol, (0, 0))
+            if WIN32_TERSEDIA and flag_up:
+                _mouse_event_absolut(x, y, flag_up)
+            else:
+                pyautogui.mouseUp(x, y, button=tombol)
 
         elif aksi == "mouse_click":
             x, y = data["x"], data["y"]
             tombol = data.get("button", "left")
             double = data.get("double", False)
-            if double:
-                pyautogui.doubleClick(x, y, button=tombol)
+            flag_down, flag_up = _TOMBOL_FLAGS.get(tombol, (0, 0))
+            if WIN32_TERSEDIA and flag_down:
+                ulang = 2 if double else 1
+                for _ in range(ulang):
+                    _mouse_event_absolut(x, y, flag_down)
+                    time.sleep(0.02)
+                    _mouse_event_absolut(x, y, flag_up)
+                    if double:
+                        time.sleep(0.05)
             else:
-                pyautogui.click(x, y, button=tombol)
-
-        elif aksi == "mouse_down":
-            x, y = data["x"], data["y"]
-            tombol = data.get("button", "left")
-            pyautogui.mouseDown(x, y, button=tombol)
-
-        elif aksi == "mouse_up":
-            x, y = data["x"], data["y"]
-            tombol = data.get("button", "left")
-            pyautogui.mouseUp(x, y, button=tombol)
+                if double:
+                    pyautogui.doubleClick(x, y, button=tombol)
+                else:
+                    pyautogui.click(x, y, button=tombol)
 
         elif aksi == "mouse_scroll":
             x, y = data["x"], data["y"]
             dx, dy = data.get("dx", 0), data.get("dy", 0)
-            pyautogui.moveTo(x, y, duration=0)
-            if dy != 0:
-                pyautogui.scroll(int(dy / 100))
-            if dx != 0:
-                pyautogui.hscroll(int(dx / 100))
+            _mouse_event_absolut(x, y, 0)
+            if WIN32_TERSEDIA:
+                if dy != 0:
+                    win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, int(dy), 0)
+                if dx != 0:
+                    win32api.mouse_event(win32con.MOUSEEVENTF_HWHEEL, 0, 0, int(dx), 0)
+            else:
+                if dy != 0:
+                    pyautogui.scroll(int(dy / 100))
 
         elif aksi == "key_press":
             pyautogui.press(data["key"])
