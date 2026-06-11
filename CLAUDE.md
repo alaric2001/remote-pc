@@ -65,11 +65,21 @@ Browser canvas events → `hitungKoordinat()` scales to agent screen resolution 
 
 ## Input execution (agent)
 
-`eksekusi_input()` is called via `loop.run_in_executor(None, eksekusi_input, data)` — it runs in a thread pool so it never blocks the asyncio event loop. This keeps keyboard events responsive even when mouse clicks are being processed.
+`eksekusi_input()` is called via `loop.run_in_executor(None, eksekusi_input, data)` — it runs in a thread pool so it never blocks the asyncio event loop. Exceptions from the thread are caught via `add_done_callback(_log_error_executor)` and logged at ERROR level.
 
-Mouse events use `win32api.mouse_event` with absolute normalized coordinates (0–65535) when win32 is available — this is necessary for compatibility with games and applications that use raw/direct input. Falls back to `pyautogui` otherwise.
+**Mouse:** Uses `win32api.mouse_event` with absolute normalized coordinates (0–65535) when win32 is available — necessary for compatibility with games and applications that use raw/direct input. Falls back to `pyautogui` otherwise.
 
-Keyboard events use `pyautogui.keyDown` / `pyautogui.keyUp`. Key names are mapped in `app.js` `KEY_MAP` before sending (e.g. `"Enter"` → `"enter"`, `"ArrowUp"` → `"up"`).
+**Keyboard:** Uses `pynput.keyboard.Controller` (`_keyboard`) — more reliable than pyautogui for sending keystrokes to all Windows applications. Key names from the browser are translated via `_terjemah_kunci()` using `_PYNPUT_KEY_MAP` (maps e.g. `"enter"` → `Key.enter`, `"ctrl"` → `Key.ctrl`). Unmapped keys (regular characters) are passed as-is.
+
+## Connection fallback (agent)
+
+Agent supports automatic fallback from LAN to Ngrok:
+
+1. Tries `SERVER_URL_LAN` first with a `LAN_TIMEOUT`-second deadline
+2. If LAN fails or times out, falls back to `SERVER_URL_NGROK`
+3. If neither is set, falls back to `SERVER_URL` (legacy single-URL mode)
+
+This allows the same `.env` to work from both inside and outside the local network without changes.
 
 ## Auth model
 
@@ -113,10 +123,12 @@ To expose the server to the internet:
 ```bash
 ngrok http 8000 --domain=your-static-domain.ngrok-free.app
 ```
-Then update `SERVER_URL` in `.env` on the agent machine:
+Set on the agent machine's `.env`:
 ```
-SERVER_URL=wss://your-static-domain.ngrok-free.app/ws/agent
+SERVER_URL_LAN=ws://192.168.x.x:8000/ws/agent
+SERVER_URL_NGROK=wss://your-static-domain.ngrok-free.app/ws/agent
 ```
+
 **Important:** Ngrok always uses HTTPS/WSS — use `wss://` not `ws://`. Using `ws://` with a ngrok domain causes a redirect to `https://` that the websockets library cannot follow, resulting in an invalid URI error.
 
 Browser clients connect to the ngrok URL automatically — `app.js` derives the WS URL from `window.location.origin`.
@@ -143,7 +155,7 @@ Agent auto-reconnects every `RECONNECT_DELAY` seconds if server is not yet up �
 
 - **websockets ≥ 14**: `extra_headers` was removed; use `additional_headers` instead. The codebase already uses `additional_headers`.
 - **websockets ≥ 14**: `websockets.InvalidStatusCode` was replaced by `websockets.exceptions.InvalidStatus`. The codebase uses the new form.
-- **pyautogui**: `FAILSAFE = False` is intentionally disabled so the remote cursor near screen corners doesn't kill the process. `PAUSE = 0` is set for minimum input latency.
+- **pyautogui**: `FAILSAFE = False` is intentionally disabled so the remote cursor near screen corners doesn't kill the process. `PAUSE = 0` is set for minimum input latency. pyautogui is still used for mouse fallback and scroll, but keyboard is handled by pynput.
 
 ## Conventions
 
