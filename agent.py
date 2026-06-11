@@ -1,5 +1,7 @@
 """
 agent.py — Dijalankan di PC target.
+Menangkap screenshot layar dan mengirimkannya ke relay server via WebSocket.
+Juga menerima perintah input (mouse/keyboard) dari server dan mengeksekusinya.
 """
 
 import asyncio
@@ -11,6 +13,7 @@ import os
 import sys
 import time
 
+import numpy as np
 import pyautogui
 import websockets
 from dotenv import load_dotenv
@@ -48,7 +51,7 @@ except ImportError:
 
 try:
     import dxcam
-    _camera = dxcam.create(output_color="BGR")  # BGR agar kompatibel dengan win32 bitmap
+    _camera = dxcam.create(output_color="RGB")
     _camera.start(target_fps=SCREENSHOT_FPS)
     DXCAM_TERSEDIA = True
     log.info("dxcam aktif — target %d FPS.", SCREENSHOT_FPS)
@@ -57,93 +60,101 @@ except Exception as e:
     _camera = None
     log.warning("dxcam tidak tersedia: %s", e)
 
+# ─── Render kursor ke PIL Image ──────────────────────────────────────────────
 
-# ─── Gambar kursor ke frame numpy via win32 ──────────────────────────────────
-
-def _gambar_kursor_win32(frame_bgr) -> None:
+def _render_kursor() -> tuple:
     """
-    Gambar kursor Windows langsung ke frame numpy BGR (in-place).
-    Cara: buat DC sementara dari frame, DrawIconEx, copy kembali ke numpy.
+    Render kursor Windows ke PIL Image RGBA 32x32.
+    Return: (img_kursor, cx, cy) atau None jika gagal/kursor tidak terlihat.
     """
-    if not WIN32_TERSEDIA:
-        return
     try:
         flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
         if not flags or hcursor == 0:
-            return
+            return None
 
-        import numpy as np
-        tinggi, lebar = frame_bgr.shape[:2]
-
-        # Buat DC + bitmap sementara
         hdc_screen = win32gui.GetDC(0)
         dc_src     = win32ui.CreateDCFromHandle(hdc_screen)
-        mem_dc     = dc_src.CreateCompatibleDC()
-        bitmap     = win32ui.CreateBitmap()
-        bitmap.CreateCompatibleBitmap(dc_src, lebar, tinggi)
-        mem_dc.SelectObject(bitmap)
+        cursor_dc  = dc_src.CreateCompatibleDC()
+        cursor_bmp = win32ui.CreateBitmap()
+        cursor_bmp.CreateCompatibleBitmap(dc_src, 32, 32)
+        cursor_dc.SelectObject(cursor_bmp)
 
-        # Copy frame numpy ke bitmap via SetDIBits
-        import ctypes
-        bmp_data = frame_bgr.tobytes()
-        # SetBitmapBits langsung — bitmap harus BGR urutan bottom-up
-        # Tapi dxcam sudah top-down, jadi flip dulu
-        flipped = frame_bgr[::-1].tobytes()
-        bitmap.SetBitmapBits(len(flipped), flipped)
+        # Background hitam agar bisa dijadikan mask transparansi
+        cursor_dc.FillSolidRect((0, 0, 32, 32), 0x000000)
+        win32gui.DrawIconEx(cursor_dc.GetSafeHdc(), 0, 0, hcursor,
+                            32, 32, 0, None, win32con.DI_NORMAL)
 
-        # Gambar kursor
-        win32gui.DrawIconEx(
-            mem_dc.GetSafeHdc(), cx, cy, hcursor,
-            0, 0, 0, None, win32con.DI_NORMAL
-        )
+        bits = cursor_bmp.GetBitmapBits(True)
+        arr  = np.frombuffer(bits, dtype=np.uint8).reshape(32, 32, 4)
 
-        # Ambil kembali pixel yang sudah ada kursornya
-        hasil_bits = bitmap.GetBitmapBits(True)
-        hasil = np.frombuffer(hasil_bits, dtype=np.uint8).reshape(tinggi, lebar, 4)
-        # Flip balik (bottom-up → top-down) dan ambil BGR saja
-        frame_bgr[:] = hasil[::-1, :, :3]
+        # BGRX → RGBA, pixel hitam = transparan
+        kursor_rgba = np.zeros((32, 32, 4), dtype=np.uint8)
+        kursor_rgba[:, :, 0] = arr[:, :, 2]  # R
+        kursor_rgba[:, :, 1] = arr[:, :, 1]  # G
+        kursor_rgba[:, :, 2] = arr[:, :, 0]  # B
+        mask = (arr[:, :, 0] > 10) | (arr[:, :, 1] > 10) | (arr[:, :, 2] > 10)
+        kursor_rgba[:, :, 3] = np.where(mask, 255, 0)
 
-        mem_dc.DeleteDC()
+        img_kursor = Image.fromarray(kursor_rgba, "RGBA")
+
+        cursor_dc.DeleteDC()
         dc_src.DeleteDC()
         win32gui.ReleaseDC(0, hdc_screen)
-        win32gui.DeleteObject(bitmap.GetHandle())
+        win32gui.DeleteObject(cursor_bmp.GetHandle())
+
+        return (img_kursor, cx, cy)
 
     except Exception as e:
-        log.debug("Gagal gambar kursor: %s", e)
+        log.debug("Gagal render kursor: %s", e)
+        return None
+
+
+def _tempel_kursor(img: Image.Image) -> Image.Image:
+    """Tempel kursor ke frame PIL. Return frame baru dengan kursor."""
+    if not WIN32_TERSEDIA:
+        return img
+
+    hasil = _render_kursor()
+    if hasil is None:
+        return img
+
+    img_kursor, cx, cy = hasil
+    img_rgba = img.convert("RGBA")
+    img_rgba.paste(img_kursor, (cx, cy), img_kursor)
+    return img_rgba.convert("RGB")
 
 
 # ─── Screenshot ──────────────────────────────────────────────────────────────
 
 def ambil_screenshot() -> str:
     """
-    Capture via dxcam (GPU) + gambar kursor via win32.
-    Fallback ke win32 GDI jika dxcam tidak tersedia.
+    Capture layar + tempel kursor.
+    Prioritas: dxcam (GPU) → win32 GDI → ImageGrab.
+    Return: string base64 JPEG.
     """
     if DXCAM_TERSEDIA and _camera is not None:
-        import numpy as np
         frame = _camera.get_latest_frame()
         if frame is not None:
-            # dxcam output_color="BGR" → frame sudah BGR numpy array
-            _gambar_kursor_win32(frame)
-            # Konversi BGR → RGB untuk PIL
-            img = Image.fromarray(frame[:, :, ::-1])
+            img = Image.fromarray(frame)
         else:
-            # Warmup / frame belum tersedia
             from PIL import ImageGrab
             img = ImageGrab.grab().convert("RGB")
     elif WIN32_TERSEDIA:
-        img = _capture_win32_dengan_kursor()
+        img = _capture_win32()
     else:
         from PIL import ImageGrab
         img = ImageGrab.grab().convert("RGB")
+
+    # Tempel kursor ke frame
+    img = _tempel_kursor(img)
 
     buffer = io.BytesIO()
     img.save(buffer, format="JPEG", quality=SCREENSHOT_QUALITY, optimize=True)
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def _capture_win32_dengan_kursor() -> Image.Image:
-    """Fallback: capture via win32 GDI + kursor."""
+def _capture_win32() -> Image.Image:
+    """Fallback capture via win32 GDI (tanpa kursor — kursor ditempel terpisah)."""
     lebar, tinggi = pyautogui.size()
     hdesktop = win32gui.GetDesktopWindow()
     hdc      = win32gui.GetWindowDC(hdesktop)
@@ -153,13 +164,6 @@ def _capture_win32_dengan_kursor() -> Image.Image:
     bitmap.CreateCompatibleBitmap(dc_obj, lebar, tinggi)
     mem_dc.SelectObject(bitmap)
     mem_dc.BitBlt((0, 0), (lebar, tinggi), dc_obj, (0, 0), win32con.SRCCOPY)
-    try:
-        flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
-        if flags:
-            win32gui.DrawIconEx(mem_dc.GetSafeHdc(), cx, cy, hcursor,
-                                0, 0, 0, None, win32con.DI_NORMAL)
-    except Exception:
-        pass
     bmp_info = bitmap.GetInfo()
     bmp_str  = bitmap.GetBitmapBits(True)
     img = Image.frombuffer("RGB", (bmp_info["bmWidth"], bmp_info["bmHeight"]),

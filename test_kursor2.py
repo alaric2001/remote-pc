@@ -1,46 +1,54 @@
-# test_kursor2.py
+# test_kursor5.py
 import win32gui, win32ui, win32con
 import numpy as np
 from PIL import Image
 import dxcam, time
 
-camera = dxcam.create(output_color="BGR")
+camera = dxcam.create(output_color="RGB")
 camera.start(target_fps=30)
 time.sleep(0.5)
 
 frame = camera.get_latest_frame().copy()
-tinggi, lebar = frame.shape[:2]
+img_layar = Image.fromarray(frame)
 
 flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
-print(f"Sebelum: pixel di kursor = {frame[cy, cx]}")
+print(f"Kursor di ({cx},{cy})")
 
-# Gambar kursor
+# Render kursor ke bitmap kecil 32x32
 hdc_screen = win32gui.GetDC(0)
 dc_src     = win32ui.CreateDCFromHandle(hdc_screen)
-mem_dc     = dc_src.CreateCompatibleDC()
-bitmap     = win32ui.CreateBitmap()
-bitmap.CreateCompatibleBitmap(dc_src, lebar, tinggi)
-mem_dc.SelectObject(bitmap)
+cursor_dc  = dc_src.CreateCompatibleDC()
+cursor_bmp = win32ui.CreateBitmap()
+cursor_bmp.CreateCompatibleBitmap(dc_src, 32, 32)
+cursor_dc.SelectObject(cursor_bmp)
 
-import ctypes
-flipped = frame[::-1].tobytes()
-ctypes.windll.gdi32.SetBitmapBits(bitmap.GetHandle(), len(flipped), flipped)
+# Background hitam agar bisa dijadikan mask
+cursor_dc.FillSolidRect((0, 0, 32, 32), 0x000000)
+win32gui.DrawIconEx(cursor_dc.GetSafeHdc(), 0, 0, hcursor, 32, 32, 0, None, win32con.DI_NORMAL)
 
-win32gui.DrawIconEx(mem_dc.GetSafeHdc(), cx, cy, hcursor, 0, 0, 0, None, win32con.DI_NORMAL)
+bits = cursor_bmp.GetBitmapBits(True)
+arr  = np.frombuffer(bits, dtype=np.uint8).reshape(32, 32, 4)
+# BGRX → RGBA
+kursor_rgba = np.zeros((32, 32, 4), dtype=np.uint8)
+kursor_rgba[:, :, 0] = arr[:, :, 2]  # R
+kursor_rgba[:, :, 1] = arr[:, :, 1]  # G
+kursor_rgba[:, :, 2] = arr[:, :, 0]  # B
+# Pixel hitam = transparan, sisanya opak
+mask = (arr[:, :, 0] > 10) | (arr[:, :, 1] > 10) | (arr[:, :, 2] > 10)
+kursor_rgba[:, :, 3] = np.where(mask, 255, 0)
 
-hasil_bits = bitmap.GetBitmapBits(True)
-hasil = np.frombuffer(hasil_bits, dtype=np.uint8).reshape(tinggi, lebar, 4)
-frame_hasil = hasil[::-1, :, :3]
+img_kursor = Image.fromarray(kursor_rgba, "RGBA")
 
-print(f"Sesudah: pixel di kursor = {frame_hasil[cy, cx]}")
+# Tempel ke frame layar
+img_layar = img_layar.convert("RGBA")
+img_layar.paste(img_kursor, (cx, cy), img_kursor)
+img_layar = img_layar.convert("RGB")
+img_layar.save("hasil_dengan_kursor.png")
 
-# Simpan untuk cek visual
-img_sebelum = Image.fromarray(frame[:, :, ::-1])
-img_sesudah = Image.fromarray(frame_hasil[:, :, ::-1])
-img_sebelum.save("sebelum.png")
-img_sesudah.save("sesudah.png")
-
-print("Tersimpan: sebelum.png dan sesudah.png")
-print("Cek apakah kursor muncul di sesudah.png")
-
+cursor_dc.DeleteDC()
+dc_src.DeleteDC()
+win32gui.ReleaseDC(0, hdc_screen)
+win32gui.DeleteObject(cursor_bmp.GetHandle())
 camera.stop()
+
+print("Cek hasil_dengan_kursor.png")
