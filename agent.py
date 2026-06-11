@@ -1,7 +1,5 @@
 """
 agent.py — Dijalankan di PC target.
-Menangkap screenshot layar dan mengirimkannya ke relay server via WebSocket.
-Juga menerima perintah input (mouse/keyboard) dari server dan mengeksekusinya.
 """
 
 import asyncio
@@ -16,20 +14,18 @@ import time
 import pyautogui
 import websockets
 from dotenv import load_dotenv
-from PIL import Image, ImageGrab
+from PIL import Image
 
 load_dotenv()
 
-# Konfigurasi dari environment variable
-SERVER_URL = os.getenv("SERVER_URL", "ws://localhost:8000/ws/agent")
-AGENT_TOKEN = os.getenv("AGENT_TOKEN", "")
-SCREENSHOT_FPS = int(os.getenv("SCREENSHOT_FPS", "10"))
-SCREENSHOT_QUALITY = int(os.getenv("SCREENSHOT_QUALITY", "50"))
-RECONNECT_DELAY = int(os.getenv("RECONNECT_DELAY", "3"))
+SERVER_URL         = os.getenv("SERVER_URL", "ws://localhost:8000/ws/agent")
+AGENT_TOKEN        = os.getenv("AGENT_TOKEN", "")
+SCREENSHOT_FPS     = int(os.getenv("SCREENSHOT_FPS", "30"))
+SCREENSHOT_QUALITY = int(os.getenv("SCREENSHOT_QUALITY", "35"))
+RECONNECT_DELAY    = int(os.getenv("RECONNECT_DELAY", "3"))
 
-# Nonaktifkan failsafe pyautogui agar tidak berhenti di sudut layar
 pyautogui.FAILSAFE = False
-pyautogui.PAUSE = 0
+pyautogui.PAUSE    = 0
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,75 +34,107 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Coba import win32 untuk capture kursor — opsional
+# ─── win32 ───────────────────────────────────────────────────────────────────
+
 try:
-    import win32gui
-    import win32ui
-    import win32con
-    import win32api
+    import win32gui, win32ui, win32con, win32api
     WIN32_TERSEDIA = True
-    log.info("win32 tersedia — kursor akan ikut tercapture.")
+    log.info("win32 tersedia.")
 except ImportError:
     WIN32_TERSEDIA = False
-    log.warning("pywin32 tidak terinstall — kursor tidak akan muncul di stream.")
-    log.warning("Jalankan: pip install pywin32")
+    log.warning("pywin32 tidak terinstall. Jalankan: pip install pywin32")
+
+# ─── dxcam ───────────────────────────────────────────────────────────────────
+
+try:
+    import dxcam
+    _camera = dxcam.create(output_color="BGR")  # BGR agar kompatibel dengan win32 bitmap
+    _camera.start(target_fps=SCREENSHOT_FPS)
+    DXCAM_TERSEDIA = True
+    log.info("dxcam aktif — target %d FPS.", SCREENSHOT_FPS)
+except Exception as e:
+    DXCAM_TERSEDIA = False
+    _camera = None
+    log.warning("dxcam tidak tersedia: %s", e)
 
 
-def ambil_screenshot_win32() -> Image.Image:
+# ─── Gambar kursor ke frame numpy via win32 ──────────────────────────────────
+
+def _gambar_kursor_win32(frame_bgr) -> None:
     """
-    Capture layar beserta kursor menggunakan win32gui.
-    Menggambar kursor secara manual di atas screenshot.
+    Gambar kursor Windows langsung ke frame numpy BGR (in-place).
+    Cara: buat DC sementara dari frame, DrawIconEx, copy kembali ke numpy.
     """
-    lebar, tinggi = pyautogui.size()
-
-    # Ambil screenshot via win32
-    hdesktop = win32gui.GetDesktopWindow()
-    hdc = win32gui.GetWindowDC(hdesktop)
-    dc_obj = win32ui.CreateDCFromHandle(hdc)
-    mem_dc = dc_obj.CreateCompatibleDC()
-    bitmap = win32ui.CreateBitmap()
-    bitmap.CreateCompatibleBitmap(dc_obj, lebar, tinggi)
-    mem_dc.SelectObject(bitmap)
-    mem_dc.BitBlt((0, 0), (lebar, tinggi), dc_obj, (0, 0), win32con.SRCCOPY)
-
-    # Gambar kursor di atas screenshot
+    if not WIN32_TERSEDIA:
+        return
     try:
         flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
-        if flags:  # kursor terlihat
-            win32gui.DrawIconEx(
-                mem_dc.GetSafeHdc(), cx, cy, hcursor,
-                0, 0, 0, None, win32con.DI_NORMAL
-            )
-    except Exception:
-        pass  # gagal gambar kursor, lanjut tanpa kursor
+        if not flags or hcursor == 0:
+            return
 
-    # Konversi ke PIL Image
-    bmp_info = bitmap.GetInfo()
-    bmp_str = bitmap.GetBitmapBits(True)
-    img = Image.frombuffer(
-        "RGB",
-        (bmp_info["bmWidth"], bmp_info["bmHeight"]),
-        bmp_str, "raw", "BGRX", 0, 1
-    )
+        import numpy as np
+        tinggi, lebar = frame_bgr.shape[:2]
 
-    # Bersihkan resource
-    mem_dc.DeleteDC()
-    dc_obj.DeleteDC()
-    win32gui.ReleaseDC(hdesktop, hdc)
-    win32gui.DeleteObject(bitmap.GetHandle())
+        # Buat DC + bitmap sementara
+        hdc_screen = win32gui.GetDC(0)
+        dc_src     = win32ui.CreateDCFromHandle(hdc_screen)
+        mem_dc     = dc_src.CreateCompatibleDC()
+        bitmap     = win32ui.CreateBitmap()
+        bitmap.CreateCompatibleBitmap(dc_src, lebar, tinggi)
+        mem_dc.SelectObject(bitmap)
 
-    return img
+        # Copy frame numpy ke bitmap via SetDIBits
+        import ctypes
+        bmp_data = frame_bgr.tobytes()
+        # SetBitmapBits langsung — bitmap harus BGR urutan bottom-up
+        # Tapi dxcam sudah top-down, jadi flip dulu
+        flipped = frame_bgr[::-1].tobytes()
+        bitmap.SetBitmapBits(len(flipped), flipped)
 
+        # Gambar kursor
+        win32gui.DrawIconEx(
+            mem_dc.GetSafeHdc(), cx, cy, hcursor,
+            0, 0, 0, None, win32con.DI_NORMAL
+        )
+
+        # Ambil kembali pixel yang sudah ada kursornya
+        hasil_bits = bitmap.GetBitmapBits(True)
+        hasil = np.frombuffer(hasil_bits, dtype=np.uint8).reshape(tinggi, lebar, 4)
+        # Flip balik (bottom-up → top-down) dan ambil BGR saja
+        frame_bgr[:] = hasil[::-1, :, :3]
+
+        mem_dc.DeleteDC()
+        dc_src.DeleteDC()
+        win32gui.ReleaseDC(0, hdc_screen)
+        win32gui.DeleteObject(bitmap.GetHandle())
+
+    except Exception as e:
+        log.debug("Gagal gambar kursor: %s", e)
+
+
+# ─── Screenshot ──────────────────────────────────────────────────────────────
 
 def ambil_screenshot() -> str:
     """
-    Menangkap seluruh layar beserta kursor.
-    Menggunakan win32 jika tersedia, fallback ke ImageGrab.
-    Mengembalikan string base64 JPEG siap kirim via WebSocket.
+    Capture via dxcam (GPU) + gambar kursor via win32.
+    Fallback ke win32 GDI jika dxcam tidak tersedia.
     """
-    if WIN32_TERSEDIA:
-        img = ambil_screenshot_win32()
+    if DXCAM_TERSEDIA and _camera is not None:
+        import numpy as np
+        frame = _camera.get_latest_frame()
+        if frame is not None:
+            # dxcam output_color="BGR" → frame sudah BGR numpy array
+            _gambar_kursor_win32(frame)
+            # Konversi BGR → RGB untuk PIL
+            img = Image.fromarray(frame[:, :, ::-1])
+        else:
+            # Warmup / frame belum tersedia
+            from PIL import ImageGrab
+            img = ImageGrab.grab().convert("RGB")
+    elif WIN32_TERSEDIA:
+        img = _capture_win32_dengan_kursor()
     else:
+        from PIL import ImageGrab
         img = ImageGrab.grab().convert("RGB")
 
     buffer = io.BytesIO()
@@ -114,150 +142,134 @@ def ambil_screenshot() -> str:
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
 
 
-def _mouse_event_absolut(x: int, y: int, flags: int, data: int = 0) -> None:
-    """
-    Kirim event mouse dengan koordinat absolut menggunakan win32api.mouse_event.
-    Koordinat dinormalisasi ke rentang 0-65535 agar kompatibel dengan game
-    yang menggunakan raw/direct input (seperti Roblox).
-    Fallback ke pyautogui jika win32 tidak tersedia.
-    """
-    if WIN32_TERSEDIA:
-        lebar, tinggi = pyautogui.size()
-        nx = int(x * 65535 / lebar)
-        ny = int(y * 65535 / tinggi)
-        # Pindahkan mouse ke posisi absolut terlebih dahulu
-        win32api.mouse_event(
-            win32con.MOUSEEVENTF_MOVE | win32con.MOUSEEVENTF_ABSOLUTE,
-            nx, ny, 0, 0
-        )
-        # Kirim event klik/down/up jika ada
+def _capture_win32_dengan_kursor() -> Image.Image:
+    """Fallback: capture via win32 GDI + kursor."""
+    lebar, tinggi = pyautogui.size()
+    hdesktop = win32gui.GetDesktopWindow()
+    hdc      = win32gui.GetWindowDC(hdesktop)
+    dc_obj   = win32ui.CreateDCFromHandle(hdc)
+    mem_dc   = dc_obj.CreateCompatibleDC()
+    bitmap   = win32ui.CreateBitmap()
+    bitmap.CreateCompatibleBitmap(dc_obj, lebar, tinggi)
+    mem_dc.SelectObject(bitmap)
+    mem_dc.BitBlt((0, 0), (lebar, tinggi), dc_obj, (0, 0), win32con.SRCCOPY)
+    try:
+        flags, hcursor, (cx, cy) = win32gui.GetCursorInfo()
         if flags:
-            win32api.mouse_event(flags, nx, ny, data, 0)
-    else:
-        # Fallback pyautogui — tidak semua game mendukung ini
+            win32gui.DrawIconEx(mem_dc.GetSafeHdc(), cx, cy, hcursor,
+                                0, 0, 0, None, win32con.DI_NORMAL)
+    except Exception:
+        pass
+    bmp_info = bitmap.GetInfo()
+    bmp_str  = bitmap.GetBitmapBits(True)
+    img = Image.frombuffer("RGB", (bmp_info["bmWidth"], bmp_info["bmHeight"]),
+                           bmp_str, "raw", "BGRX", 0, 1)
+    mem_dc.DeleteDC(); dc_obj.DeleteDC()
+    win32gui.ReleaseDC(hdesktop, hdc)
+    win32gui.DeleteObject(bitmap.GetHandle())
+    return img
+
+
+# ─── Input ───────────────────────────────────────────────────────────────────
+
+_TOMBOL_FLAGS = {}
+if WIN32_TERSEDIA:
+    _TOMBOL_FLAGS = {
+        "left":   (win32con.MOUSEEVENTF_LEFTDOWN,   win32con.MOUSEEVENTF_LEFTUP),
+        "right":  (win32con.MOUSEEVENTF_RIGHTDOWN,  win32con.MOUSEEVENTF_RIGHTUP),
+        "middle": (win32con.MOUSEEVENTF_MIDDLEDOWN, win32con.MOUSEEVENTF_MIDDLEUP),
+    }
+
+
+def _mouse_absolut(x: int, y: int, flags: int = 0, data: int = 0) -> None:
+    if not WIN32_TERSEDIA:
         pyautogui.moveTo(x, y, duration=0)
-
-
-# Mapping nama tombol ke flag win32con untuk mouse down dan mouse up
-_TOMBOL_FLAGS = {
-    "left":   (win32con.MOUSEEVENTF_LEFTDOWN,   win32con.MOUSEEVENTF_LEFTUP)   if WIN32_TERSEDIA else (0, 0),
-    "right":  (win32con.MOUSEEVENTF_RIGHTDOWN,  win32con.MOUSEEVENTF_RIGHTUP)  if WIN32_TERSEDIA else (0, 0),
-    "middle": (win32con.MOUSEEVENTF_MIDDLEDOWN, win32con.MOUSEEVENTF_MIDDLEUP) if WIN32_TERSEDIA else (0, 0),
-}
+        return
+    lebar, tinggi = pyautogui.size()
+    nx = int(x * 65535 / lebar)
+    ny = int(y * 65535 / tinggi)
+    win32api.mouse_event(
+        win32con.MOUSEEVENTF_MOVE | win32con.MOUSEEVENTF_ABSOLUTE, nx, ny, 0, 0
+    )
+    if flags:
+        win32api.mouse_event(flags, nx, ny, data, 0)
 
 
 def eksekusi_input(data: dict) -> None:
-    """
-    Mengeksekusi perintah input yang diterima dari server.
-    Operasi mouse menggunakan win32api untuk kompatibilitas game (Roblox, dll).
-    Keyboard tetap menggunakan pyautogui.
-    """
     aksi = data.get("action")
-
     try:
         if aksi == "mouse_move":
-            x, y = data["x"], data["y"]
-            _mouse_event_absolut(x, y, 0)
+            _mouse_absolut(data["x"], data["y"])
 
         elif aksi == "mouse_down":
-            x, y = data["x"], data["y"]
             tombol = data.get("button", "left")
             flag_down, _ = _TOMBOL_FLAGS.get(tombol, (0, 0))
             if WIN32_TERSEDIA and flag_down:
-                _mouse_event_absolut(x, y, flag_down)
+                _mouse_absolut(data["x"], data["y"], flag_down)
             else:
-                pyautogui.mouseDown(x, y, button=tombol)
+                pyautogui.mouseDown(data["x"], data["y"], button=tombol)
 
         elif aksi == "mouse_up":
-            x, y = data["x"], data["y"]
             tombol = data.get("button", "left")
             _, flag_up = _TOMBOL_FLAGS.get(tombol, (0, 0))
             if WIN32_TERSEDIA and flag_up:
-                _mouse_event_absolut(x, y, flag_up)
+                _mouse_absolut(data["x"], data["y"], flag_up)
             else:
-                pyautogui.mouseUp(x, y, button=tombol)
+                pyautogui.mouseUp(data["x"], data["y"], button=tombol)
 
         elif aksi == "mouse_click":
-            x, y = data["x"], data["y"]
             tombol = data.get("button", "left")
             double = data.get("double", False)
             flag_down, flag_up = _TOMBOL_FLAGS.get(tombol, (0, 0))
             if WIN32_TERSEDIA and flag_down:
-                ulang = 2 if double else 1
-                for _ in range(ulang):
-                    _mouse_event_absolut(x, y, flag_down)
+                for _ in range(2 if double else 1):
+                    _mouse_absolut(data["x"], data["y"], flag_down)
                     time.sleep(0.02)
-                    _mouse_event_absolut(x, y, flag_up)
-                    if double:
-                        time.sleep(0.05)
+                    _mouse_absolut(data["x"], data["y"], flag_up)
+                    if double: time.sleep(0.05)
             else:
-                if double:
-                    pyautogui.doubleClick(x, y, button=tombol)
-                else:
-                    pyautogui.click(x, y, button=tombol)
+                if double: pyautogui.doubleClick(data["x"], data["y"], button=tombol)
+                else:      pyautogui.click(data["x"], data["y"], button=tombol)
 
         elif aksi == "mouse_scroll":
             x, y = data["x"], data["y"]
             dx, dy = data.get("dx", 0), data.get("dy", 0)
-            _mouse_event_absolut(x, y, 0)
+            _mouse_absolut(x, y)
             if WIN32_TERSEDIA:
-                if dy != 0:
-                    win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, int(dy), 0)
-                if dx != 0:
-                    win32api.mouse_event(win32con.MOUSEEVENTF_HWHEEL, 0, 0, int(dx), 0)
+                if dy != 0: win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL,  0, 0, int(dy), 0)
+                if dx != 0: win32api.mouse_event(win32con.MOUSEEVENTF_HWHEEL, 0, 0, int(dx), 0)
             else:
-                if dy != 0:
-                    pyautogui.scroll(int(dy / 100))
+                if dy != 0: pyautogui.scroll(int(dy / 100))
 
-        elif aksi == "key_press":
-            pyautogui.press(data["key"])
-
-        elif aksi == "key_down":
-            pyautogui.keyDown(data["key"])
-
-        elif aksi == "key_up":
-            pyautogui.keyUp(data["key"])
-
-        elif aksi == "key_type":
-            pyautogui.write(data["text"], interval=0.02)
-
-        else:
-            log.warning("Aksi tidak dikenal: %s", aksi)
+        elif aksi == "key_press":  pyautogui.press(data["key"])
+        elif aksi == "key_down":   pyautogui.keyDown(data["key"])
+        elif aksi == "key_up":     pyautogui.keyUp(data["key"])
+        elif aksi == "key_type":   pyautogui.write(data["text"], interval=0.02)
+        else: log.warning("Aksi tidak dikenal: %s", aksi)
 
     except Exception as e:
         log.error("Gagal eksekusi input '%s': %s", aksi, e)
 
 
 def bersihkan_state_input() -> None:
-    """
-    Melepaskan semua tombol modifier dan tombol mouse yang mungkin tersangkut.
-    """
     log.info("Membersihkan state input...")
-    for kunci in ["ctrl", "shift", "alt", "win"]:
-        try:
-            pyautogui.keyUp(kunci)
-        except Exception:
-            pass
-    for tombol in ["left", "right", "middle"]:
-        try:
-            pyautogui.mouseUp(button=tombol)
-        except Exception:
-            pass
+    for k in ["ctrl", "shift", "alt", "win"]:
+        try: pyautogui.keyUp(k)
+        except Exception: pass
+    for t in ["left", "right", "middle"]:
+        try: pyautogui.mouseUp(button=t)
+        except Exception: pass
 
+
+# ─── Coroutines ──────────────────────────────────────────────────────────────
 
 async def kirim_screenshot(ws) -> None:
-    """
-    Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS.
-    ambil_screenshot() dijalankan di thread pool agar tidak memblokir
-    event loop — penting di FPS tinggi agar penerimaan input tetap responsif.
-    """
     interval = 1.0 / SCREENSHOT_FPS
     loop = asyncio.get_event_loop()
 
     while True:
         mulai = time.monotonic()
         try:
-            # Capture layar di thread terpisah, tidak memblokir coroutine lain
             frame = await loop.run_in_executor(None, ambil_screenshot)
             await ws.send(json.dumps({"type": "frame", "data": frame}))
         except websockets.ConnectionClosed:
@@ -271,17 +283,13 @@ async def kirim_screenshot(ws) -> None:
 
 
 async def terima_perintah(ws) -> None:
-    """Loop penerimaan perintah input dari server."""
     async for pesan in ws:
         try:
             data = json.loads(pesan)
             tipe = data.get("type")
-            if tipe == "input":
-                eksekusi_input(data)
-            elif tipe == "ping":
-                await ws.send(json.dumps({"type": "pong"}))
-            else:
-                log.debug("Pesan tidak dikenal: %s", tipe)
+            if tipe == "input":  eksekusi_input(data)
+            elif tipe == "ping": await ws.send(json.dumps({"type": "pong"}))
+            else: log.debug("Pesan tidak dikenal: %s", tipe)
         except json.JSONDecodeError:
             log.warning("Pesan bukan JSON yang valid")
         except websockets.ConnectionClosed:
@@ -289,11 +297,6 @@ async def terima_perintah(ws) -> None:
 
 
 async def jalankan_agent() -> None:
-    """
-    Fungsi utama agent: koneksi ke server, kirim info resolusi,
-    lalu jalankan loop screenshot dan penerima perintah bersamaan.
-    Otomatis reconnect jika koneksi terputus.
-    """
     headers = {"Authorization": f"Bearer {AGENT_TOKEN}"}
 
     while True:
@@ -306,32 +309,26 @@ async def jalankan_agent() -> None:
                 ping_timeout=10,
                 close_timeout=5,
             ) as ws:
-                log.info("Terhubung ke server. Memulai stream layar...")
-
+                log.info("Terhubung. Memulai stream %d FPS...", SCREENSHOT_FPS)
                 lebar, tinggi = pyautogui.size()
                 await ws.send(json.dumps({"type": "info", "width": lebar, "height": tinggi}))
-
-                await asyncio.gather(
-                    kirim_screenshot(ws),
-                    terima_perintah(ws),
-                )
-
+                await asyncio.gather(kirim_screenshot(ws), terima_perintah(ws))
             bersihkan_state_input()
 
         except websockets.exceptions.InvalidStatus as e:
             log.error("Koneksi ditolak (status %s). Cek AGENT_TOKEN.", e.response.status_code)
             await asyncio.sleep(RECONNECT_DELAY * 2)
-
         except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
             log.warning("Koneksi terputus: %s. Reconnect dalam %ds...", e, RECONNECT_DELAY)
             bersihkan_state_input()
             await asyncio.sleep(RECONNECT_DELAY)
-
         except Exception as e:
             log.error("Error tidak terduga: %s. Reconnect dalam %ds...", e, RECONNECT_DELAY)
             bersihkan_state_input()
             await asyncio.sleep(RECONNECT_DELAY)
 
+
+# ─── Entry point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     if not AGENT_TOKEN:
@@ -345,3 +342,6 @@ if __name__ == "__main__":
         log.info("Agent dihentikan oleh pengguna.")
     finally:
         bersihkan_state_input()
+        if _camera is not None:
+            try: _camera.stop()
+            except Exception: pass
