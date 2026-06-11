@@ -246,13 +246,19 @@ def bersihkan_state_input() -> None:
 
 
 async def kirim_screenshot(ws) -> None:
-    """Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS."""
+    """
+    Loop pengiriman screenshot secara periodik sesuai SCREENSHOT_FPS.
+    ambil_screenshot() dijalankan di thread pool agar tidak memblokir
+    event loop — penting di FPS tinggi agar penerimaan input tetap responsif.
+    """
     interval = 1.0 / SCREENSHOT_FPS
+    loop = asyncio.get_event_loop()
 
     while True:
         mulai = time.monotonic()
         try:
-            frame = ambil_screenshot()
+            # Capture layar di thread terpisah, tidak memblokir coroutine lain
+            frame = await loop.run_in_executor(None, ambil_screenshot)
             await ws.send(json.dumps({"type": "frame", "data": frame}))
         except websockets.ConnectionClosed:
             break
