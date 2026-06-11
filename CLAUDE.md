@@ -10,6 +10,9 @@ Copy `.env.example` to `.env` and fill in the values before running anything.
 # Install dependencies (once)
 pip install -r requirements.txt
 
+# Optional: install dxcam for GPU-accelerated high-FPS capture (recommended)
+pip install dxcam
+
 # Start relay server (must be running before agent or browser connects)
 python server.py
 
@@ -37,14 +40,36 @@ agent.py  ──WS /ws/agent──►  server.py  ◄──WS /ws/client──  
 ```
 
 **Data flow — screen stream:**
-`agent.py` captures screen with `PIL.ImageGrab` → compresses to JPEG → encodes base64 → sends JSON `{type:"frame", data:"..."}` → server broadcasts to all entries in `client_list` → browser decodes base64 in `renderFrame()` → draws to `<canvas>`.
+`agent.py` captures screen → compresses to JPEG → encodes base64 → sends JSON `{type:"frame", data:"..."}` → server broadcasts to all entries in `client_list` → browser decodes base64 in `renderFrame()` → draws to `<canvas>`.
 
 **Data flow — input commands:**
-Browser canvas events → `hitungKoordinat()` scales to agent screen resolution → `kirimInput()` sends JSON `{type:"input", action:"...", ...}` → server forwards to `agent_ws` → `eksekusi_input()` calls pyautogui.
+Browser canvas events → `hitungKoordinat()` scales to agent screen resolution → `kirimInput()` sends JSON `{type:"input", action:"...", ...}` → server forwards to `agent_ws` → `eksekusi_input()` runs in thread executor (non-blocking).
 
 **Resolution scaling** is the critical link between browser and agent. On connect, agent sends `{type:"info", width, height}` which the browser stores in `remoteWidth`/`remoteHeight`. Every mouse coordinate is multiplied by `remoteWidth / canvas.width` before being sent.
 
 **Static file serving:** `server.py` mounts `client/` at `/static/` via FastAPI `StaticFiles`. The root route `/` redirects to `/static/index.html`.
+
+## Screen capture (agent)
+
+`ambil_screenshot()` uses a priority chain:
+
+1. **dxcam** (GPU, DirectX) — fastest, handles HDR, runs as continuous background thread via `_camera.start()`. `get_latest_frame()` returns the latest captured array immediately.
+2. **win32 GDI** (`_capture_win32()`) — fallback when dxcam unavailable. Uses `BitBlt` + `GetBitmapBits`. Creates/destroys GDI objects per frame (acceptable since it is only a fallback).
+3. **PIL `ImageGrab`** — last resort. Slowest (~30ms/frame, ~25 FPS ceiling), but handles colors correctly on all setups.
+
+**Cursor overlay** (`_tempel_kursor`): `_render_kursor()` renders the Windows cursor to a 32×32 RGBA PIL image using win32 (DrawIconEx onto a 32×32 compatible bitmap). The cursor is pasted onto the RGB frame using the alpha channel as mask — avoids converting the full-resolution frame to RGBA.
+
+**Why not use mss for capture:** mss returns raw pixel data that does not apply Windows color management, causing very dark output on HDR or certain display configurations.
+
+**WebSocket compression is disabled** (`compression=None`) on the agent's connection because JPEG is already compressed — double compression wastes CPU and adds latency.
+
+## Input execution (agent)
+
+`eksekusi_input()` is called via `loop.run_in_executor(None, eksekusi_input, data)` — it runs in a thread pool so it never blocks the asyncio event loop. This keeps keyboard events responsive even when mouse clicks are being processed.
+
+Mouse events use `win32api.mouse_event` with absolute normalized coordinates (0–65535) when win32 is available — this is necessary for compatibility with games and applications that use raw/direct input. Falls back to `pyautogui` otherwise.
+
+Keyboard events use `pyautogui.keyDown` / `pyautogui.keyUp`. Key names are mapped in `app.js` `KEY_MAP` before sending (e.g. `"Enter"` → `"enter"`, `"ArrowUp"` → `"up"`).
 
 ## Auth model
 
@@ -96,6 +121,8 @@ SERVER_URL=wss://your-static-domain.ngrok-free.app/ws/agent
 
 Browser clients connect to the ngrok URL automatically — `app.js` derives the WS URL from `window.location.origin`.
 
+**Expected latency over ngrok:** ~100–400ms round-trip (key press → visible on screen). This is inherent to internet routing and not fixable in code. If bandwidth is limited, reduce `SCREENSHOT_FPS` (20–30) to prevent WebSocket buffer buildup, which makes input feel more responsive even at lower FPS.
+
 ## Startup order
 
 ```
@@ -104,13 +131,26 @@ python server.py  →  ngrok http 8000  →  python agent.py  →  open browser
 
 Agent auto-reconnects every `RECONNECT_DELAY` seconds if server is not yet up — order matters but the agent is tolerant of a missing server.
 
+## Dependencies
+
+`requirements.txt` covers the mandatory dependencies. Additional optional packages:
+- `dxcam` — GPU-accelerated screen capture; if not installed, agent falls back to win32/ImageGrab
+- `numpy` — used by dxcam frame processing (`Image.fromarray`)
+
+`dxcam` and `numpy` are not in `requirements.txt` because they are optional and have heavier install requirements (numpy is typically already present via other packages).
+
+## Compatibility notes
+
+- **websockets ≥ 14**: `extra_headers` was removed; use `additional_headers` instead. The codebase already uses `additional_headers`.
+- **websockets ≥ 14**: `websockets.InvalidStatusCode` was replaced by `websockets.exceptions.InvalidStatus`. The codebase uses the new form.
+- **pyautogui**: `FAILSAFE = False` is intentionally disabled so the remote cursor near screen corners doesn't kill the process. `PAUSE = 0` is set for minimum input latency.
+
 ## Conventions
 
 - **All function names, variable names, log messages, and comments are in Indonesian.** This is intentional — maintain it when adding new code.
 - All config values must come from environment variables via `config.py`. Never read `os.getenv()` directly in `server.py` or `auth.py`.
 - Both `agent.py` and `server.py` validate their required env vars at startup and call `sys.exit(1)` if missing.
 - Frontend auto-detects the server URL from `window.location.origin` — no hardcoded URLs in `app.js`.
-- `pyautogui.FAILSAFE = False` is intentionally disabled in agent so the remote cursor near screen corners doesn't kill the process.
 
 ## WebSocket message types reference
 

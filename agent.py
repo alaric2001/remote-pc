@@ -110,7 +110,7 @@ def _render_kursor() -> tuple:
 
 
 def _tempel_kursor(img: Image.Image) -> Image.Image:
-    """Tempel kursor ke frame PIL. Return frame baru dengan kursor."""
+    """Tempel kursor ke frame PIL menggunakan alpha mask — tanpa konversi RGBA full-frame."""
     if not WIN32_TERSEDIA:
         return img
 
@@ -119,9 +119,9 @@ def _tempel_kursor(img: Image.Image) -> Image.Image:
         return img
 
     img_kursor, cx, cy = hasil
-    img_rgba = img.convert("RGBA")
-    img_rgba.paste(img_kursor, (cx, cy), img_kursor)
-    return img_rgba.convert("RGB")
+    # paste() ke RGB langsung pakai alpha channel dari img_kursor sebagai mask
+    img.paste(img_kursor, (cx, cy), img_kursor)
+    return img
 
 
 # ─── Screenshot ──────────────────────────────────────────────────────────────
@@ -228,9 +228,7 @@ def eksekusi_input(data: dict) -> None:
             if WIN32_TERSEDIA and flag_down:
                 for _ in range(2 if double else 1):
                     _mouse_absolut(data["x"], data["y"], flag_down)
-                    time.sleep(0.02)
                     _mouse_absolut(data["x"], data["y"], flag_up)
-                    if double: time.sleep(0.05)
             else:
                 if double: pyautogui.doubleClick(data["x"], data["y"], button=tombol)
                 else:      pyautogui.click(data["x"], data["y"], button=tombol)
@@ -245,10 +243,16 @@ def eksekusi_input(data: dict) -> None:
             else:
                 if dy != 0: pyautogui.scroll(int(dy / 100))
 
-        elif aksi == "key_press":  pyautogui.press(data["key"])
-        elif aksi == "key_down":   pyautogui.keyDown(data["key"])
-        elif aksi == "key_up":     pyautogui.keyUp(data["key"])
-        elif aksi == "key_type":   pyautogui.write(data["text"], interval=0.02)
+        elif aksi == "key_press":
+            log.info("Key press: %s", data["key"])
+            pyautogui.press(data["key"])
+        elif aksi == "key_down":
+            log.info("Key down: %s", data["key"])
+            pyautogui.keyDown(data["key"])
+        elif aksi == "key_up":
+            pyautogui.keyUp(data["key"])
+        elif aksi == "key_type":
+            pyautogui.write(data["text"], interval=0.02)
         else: log.warning("Aksi tidak dikenal: %s", aksi)
 
     except Exception as e:
@@ -282,18 +286,22 @@ async def kirim_screenshot(ws) -> None:
             log.error("Gagal kirim screenshot: %s", e)
 
         sisa = interval - (time.monotonic() - mulai)
-        if sisa > 0:
-            await asyncio.sleep(sisa)
+        await asyncio.sleep(max(0, sisa))
 
 
 async def terima_perintah(ws) -> None:
+    loop = asyncio.get_event_loop()
     async for pesan in ws:
         try:
             data = json.loads(pesan)
             tipe = data.get("type")
-            if tipe == "input":  eksekusi_input(data)
-            elif tipe == "ping": await ws.send(json.dumps({"type": "pong"}))
-            else: log.debug("Pesan tidak dikenal: %s", tipe)
+            if tipe == "input":
+                # Jalankan di thread agar tidak memblokir event loop
+                loop.run_in_executor(None, eksekusi_input, data)
+            elif tipe == "ping":
+                await ws.send(json.dumps({"type": "pong"}))
+            else:
+                log.debug("Pesan tidak dikenal: %s", tipe)
         except json.JSONDecodeError:
             log.warning("Pesan bukan JSON yang valid")
         except websockets.ConnectionClosed:
@@ -312,6 +320,7 @@ async def jalankan_agent() -> None:
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
+                compression=None,  # JPEG sudah terkompresi, hindari overhead CPU
             ) as ws:
                 log.info("Terhubung. Memulai stream %d FPS...", SCREENSHOT_FPS)
                 lebar, tinggi = pyautogui.size()
