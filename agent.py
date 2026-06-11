@@ -21,11 +21,17 @@ from PIL import Image
 
 load_dotenv()
 
+# SERVER_URL_LAN   : koneksi lokal (prioritas utama, latensi rendah)
+# SERVER_URL_NGROK : fallback jika LAN tidak tersedia
+# SERVER_URL       : digunakan jika kedua variabel di atas tidak diset (kompatibilitas lama)
+SERVER_URL_LAN     = os.getenv("SERVER_URL_LAN", "")
+SERVER_URL_NGROK   = os.getenv("SERVER_URL_NGROK", "")
 SERVER_URL         = os.getenv("SERVER_URL", "ws://localhost:8000/ws/agent")
 AGENT_TOKEN        = os.getenv("AGENT_TOKEN", "")
 SCREENSHOT_FPS     = int(os.getenv("SCREENSHOT_FPS", "30"))
 SCREENSHOT_QUALITY = int(os.getenv("SCREENSHOT_QUALITY", "35"))
 RECONNECT_DELAY    = int(os.getenv("RECONNECT_DELAY", "3"))
+LAN_TIMEOUT        = int(os.getenv("LAN_TIMEOUT", "3"))  # detik sebelum fallback ke ngrok
 
 pyautogui.FAILSAFE = False
 pyautogui.PAUSE    = 0
@@ -308,35 +314,87 @@ async def terima_perintah(ws) -> None:
             break
 
 
-async def jalankan_agent() -> None:
-    headers = {"Authorization": f"Bearer {AGENT_TOKEN}"}
-
-    while True:
-        try:
-            log.info("Menghubungkan ke server: %s", SERVER_URL)
-            async with websockets.connect(
-                SERVER_URL,
+async def coba_koneksi(url: str, headers: dict, timeout: float) -> bool:
+    """
+    Coba konek ke `url` dalam batas waktu `timeout` detik.
+    Jika berhasil, jalankan loop stream penuh.
+    Return True jika sesi berjalan normal, False jika gagal koneksi awal.
+    """
+    try:
+        async with asyncio.timeout(timeout):
+            ws_conn = await websockets.connect(
+                url,
                 additional_headers=headers,
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
-                compression=None,  # JPEG sudah terkompresi, hindari overhead CPU
-            ) as ws:
-                log.info("Terhubung. Memulai stream %d FPS...", SCREENSHOT_FPS)
-                lebar, tinggi = pyautogui.size()
-                await ws.send(json.dumps({"type": "info", "width": lebar, "height": tinggi}))
-                await asyncio.gather(kirim_screenshot(ws), terima_perintah(ws))
-            bersihkan_state_input()
+                compression=None,
+            )
+    except (TimeoutError, asyncio.TimeoutError, ConnectionRefusedError,
+            OSError, websockets.exceptions.InvalidStatus,
+            websockets.exceptions.InvalidURI):
+        return False
 
-        except websockets.exceptions.InvalidStatus as e:
-            log.error("Koneksi ditolak (status %s). Cek AGENT_TOKEN.", e.response.status_code)
-            await asyncio.sleep(RECONNECT_DELAY * 2)
-        except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
-            log.warning("Koneksi terputus: %s. Reconnect dalam %ds...", e, RECONNECT_DELAY)
-            bersihkan_state_input()
-            await asyncio.sleep(RECONNECT_DELAY)
-        except Exception as e:
-            log.error("Error tidak terduga: %s. Reconnect dalam %ds...", e, RECONNECT_DELAY)
+    # Koneksi berhasil — jalankan sesi penuh
+    async with ws_conn as ws:
+        log.info("Terhubung ke %s. Memulai stream %d FPS...", url, SCREENSHOT_FPS)
+        lebar, tinggi = pyautogui.size()
+        await ws.send(json.dumps({"type": "info", "width": lebar, "height": tinggi}))
+        await asyncio.gather(kirim_screenshot(ws), terima_perintah(ws))
+
+    return True
+
+
+async def jalankan_agent() -> None:
+    """
+    Loop utama agent dengan auto-deteksi LAN vs Ngrok:
+    - Jika SERVER_URL_LAN dan SERVER_URL_NGROK diset, coba LAN dulu.
+      Jika LAN gagal dalam LAN_TIMEOUT detik, langsung pakai Ngrok.
+    - Jika hanya SERVER_URL yang diset (mode lama), langsung pakai itu.
+    """
+    headers = {"Authorization": f"Bearer {AGENT_TOKEN}"}
+
+    # Tentukan daftar URL yang akan dicoba berurutan
+    if SERVER_URL_LAN or SERVER_URL_NGROK:
+        daftar_url = [u for u in [SERVER_URL_LAN, SERVER_URL_NGROK] if u]
+        mode_auto = len(daftar_url) > 1
+    else:
+        daftar_url = [SERVER_URL]
+        mode_auto = False
+
+    while True:
+        terhubung = False
+
+        for i, url in enumerate(daftar_url):
+            adalah_lan  = (url == SERVER_URL_LAN and mode_auto)
+            adalah_last = (i == len(daftar_url) - 1)
+            timeout     = LAN_TIMEOUT if (adalah_lan and not adalah_last) else 30
+
+            if adalah_lan:
+                log.info("Mencoba LAN (%s) timeout %ds...", url, timeout)
+            else:
+                log.info("Menghubungkan ke %s...", url)
+
+            try:
+                berhasil = await coba_koneksi(url, headers, timeout)
+            except websockets.exceptions.InvalidStatus as e:
+                log.error("Ditolak server (status %s). Cek AGENT_TOKEN.", e.response.status_code)
+                await asyncio.sleep(RECONNECT_DELAY * 2)
+                break
+            except Exception as e:
+                log.error("Error tidak terduga: %s", e)
+                berhasil = False
+
+            if berhasil:
+                terhubung = True
+                bersihkan_state_input()
+                break  # reconnect dari awal (coba LAN lagi)
+
+            if adalah_lan and not adalah_last:
+                log.warning("LAN tidak tersedia, beralih ke Ngrok...")
+
+        if not terhubung:
+            log.warning("Semua server tidak tersedia. Reconnect dalam %ds...", RECONNECT_DELAY)
             bersihkan_state_input()
             await asyncio.sleep(RECONNECT_DELAY)
 
